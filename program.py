@@ -123,12 +123,9 @@ class ImageGUI:
         self.display_image(processed_image, ImgType.Processed)
 
     def find_faces(self, file_path: str):
-
         image = cv2.imread(file_path)
-
         (h, w) = image.shape[:2]
 
-        # Create blob
         blob = cv2.dnn.blobFromImage(
             cv2.resize(image, (300, 300)),
             1.0,
@@ -136,112 +133,179 @@ class ImageGUI:
             (104.0, 177.0, 123.0)
         )
 
-        # Run detector
         self.net.setInput(blob)
-
         detections = self.net.forward()
 
         faces = []
 
         # Loop over detections
         for i in range(detections.shape[2]):
-
             confidence = detections[0, 0, i, 2]
-
             # Ignore weak detections
             # Test to see if this threshold can be increased for fewer potential false positives (there are none from the sample images tho)
             if confidence > 0.5:
-
                 box = detections[0, 0, i, 3:7] * np.array([w, h, w, h])
-
                 (startX, startY, endX, endY) = box.astype("int")
-
                 faces.append((startX, startY, endX, endY))
 
-                # Draw rectangle
-                cv2.rectangle(
-                    image,
-                    (startX, startY),
-                    (endX, endY),
-                    (0, 255, 0),
-                    2
-                )
+        clean_image = image.copy()
 
-                # Confidence text
-                text = f"{confidence * 100:.1f}%"
+        # Draw bounding boxes and confidence labels on the display image only
+        for (startX, startY, endX, endY) in faces:
+            cv2.rectangle(image, (startX, startY),
+                          (endX, endY), (0, 255, 0), 2)
+            text = f"{detections[0, 0, faces.index((startX, startY, endX, endY)), 2] * 100:.1f}%"
+            y = startY - 10 if startY - 10 > 10 else startY + 10
+            cv2.putText(image, text, (startX, y),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 255, 0), 2)
 
-                y = startY - 10 if startY - 10 > 10 else startY + 10
+            # # Draw rectangle
+            # cv2.rectangle(
+            #     image,
+            #     (startX, startY),
+            #     (endX, endY),
+            #     (0, 255, 0),
+            #     2
+            # )
 
-                cv2.putText(
-                    image,
-                    text,
-                    (startX, y),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.45,
-                    (0, 255, 0),
-                    2
-                )
+            # # Confidence text
+            # text = f"{confidence * 100:.1f}%"
 
-        image = self.detect_landmarks(image, faces)
+            # y = startY - 10 if startY - 10 > 10 else startY + 10
+
+            # cv2.putText(
+            #     image,
+            #     text,
+            #     (startX, y),
+            #     cv2.FONT_HERSHEY_SIMPLEX,
+            #     0.45,
+            #     (0, 255, 0),
+            #     2
+            # )
+
+        image, aligned_faces = self.detect_landmarks(image, clean_image, faces)
+        image = self.place_faces_on_corners(image, aligned_faces)
 
         # Convert BGR → RGB
         image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-
-        # Convert to PIL
         output_pil = Image.fromarray(image_rgb)
 
         return output_pil, faces
 
-    def detect_landmarks(self, image, faces):
+    def align_face(self, image, left_eye, right_eye, nose):
 
-        image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        # Source landmark points
+        src_points = np.float32([
+            left_eye,
+            right_eye,
+            nose
+        ])
 
+        # Destination landmark points
+        dst_points = np.float32([
+            [40, 40],
+            [85, 40],
+            [63, 70]
+        ])
+
+        # Compute affine transform
+        M = cv2.getAffineTransform(src_points, dst_points)
+
+        # Warp image
+        aligned_face = cv2.warpAffine(image, M, (125, 125))
+
+        return aligned_face
+
+    # def get_landmarks(self, face_landmarks, w, h):
+
+    #     LEFT_EYE = 33
+    #     RIGHT_EYE = 263
+    #     NOSE_TIP = 1
+
+    #     left_eye = face_landmarks.landmark[LEFT_EYE]
+    #     right_eye = face_landmarks.landmark[RIGHT_EYE]
+    #     nose = face_landmarks.landmark[NOSE_TIP]
+
+    #     lx = int(left_eye.x * w)
+    #     ly = int(left_eye.y * h)
+
+    #     rx = int(right_eye.x * w)
+    #     ry = int(right_eye.y * h)
+
+    #     nx = int(nose.x * w)
+    #     ny = int(nose.y * h)
+
+    #     return (lx, ly), (rx, ry), (nx, ny)
+
+    def detect_landmarks(self, image, clean_image, face_boxes):
+        """
+        Detects landmarks, draws them on the display image, and produces
+        clean aligned face thumbnails from the unmodified clean_image.
+        """
+        image_rgb = cv2.cvtColor(clean_image, cv2.COLOR_BGR2RGB)
         results = self.face_mesh.process(image_rgb)
 
-        if not results.multi_face_landmarks:
-            return image
-
+        aligned_faces = []
         h, w = image.shape[:2]
 
-        for face_landmarks in results.multi_face_landmarks:
+        if not results.multi_face_landmarks:
+            return image, aligned_faces
 
-            # MediaPipe landmark indices
+        for face_landmarks in results.multi_face_landmarks:
             LEFT_EYE = 33
             RIGHT_EYE = 263
             NOSE_TIP = 1
 
-            # Left eye
-            left_eye = face_landmarks.landmark[LEFT_EYE]
-            lx = int(left_eye.x * w)
-            ly = int(left_eye.y * h)
+            lx = int(face_landmarks.landmark[LEFT_EYE].x * w)
+            ly = int(face_landmarks.landmark[LEFT_EYE].y * h)
+            rx = int(face_landmarks.landmark[RIGHT_EYE].x * w)
+            ry = int(face_landmarks.landmark[RIGHT_EYE].y * h)
+            nx = int(face_landmarks.landmark[NOSE_TIP].x * w)
+            ny = int(face_landmarks.landmark[NOSE_TIP].y * h)
 
-            # Right eye
-            right_eye = face_landmarks.landmark[RIGHT_EYE]
-            rx = int(right_eye.x * w)
-            ry = int(right_eye.y * h)
+            left_eye = (lx, ly)
+            right_eye = (rx, ry)
+            nose = (nx, ny)
 
-            # Nose tip
-            nose = face_landmarks.landmark[NOSE_TIP]
-            nx = int(nose.x * w)
-            ny = int(nose.y * h)
+            # Draw landmarks on the display image
+            cv2.circle(image, left_eye,  4, (0, 255, 0), -1)  # green
+            cv2.circle(image, right_eye, 4, (0, 0, 255), -1)  # red
+            cv2.circle(image, nose,      4, (255, 0, 0), -1)  # blue
 
-            # Draw landmarks
-            cv2.circle(image, (lx, ly), 4, (255, 0, 0), -1)
-            cv2.circle(image, (rx, ry), 4, (0, 255, 0), -1)
-            cv2.circle(image, (nx, ny), 4, (0, 0, 255), -1)
+            # FIX 3 cont: Align from the clean full image so warpAffine has
+            # full context. The 125x125 output window acts as the crop.
+            aligned_face = self.align_face(
+                clean_image, left_eye, right_eye, nose)
 
-            # Labels
-            cv2.putText(image, "L Eye", (lx + 5, ly),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5,
-                        (255, 0, 0), 1)
+            # Draw target landmarks on aligned face thumbnail
+            cv2.circle(aligned_face, (40, 40), 4,
+                       (0, 255, 0), -1)  # green - left eye
+            cv2.circle(aligned_face, (85, 40), 4,
+                       (0, 0, 255), -1)  # red   - right eye
+            cv2.circle(aligned_face, (63, 70), 4,
+                       (255, 0, 0), -1)  # blue  - nose
 
-            cv2.putText(image, "R Eye", (rx + 5, ry),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5,
-                        (0, 255, 0), 1)
+            aligned_faces.append(aligned_face)
 
-            cv2.putText(image, "Nose", (nx + 5, ny),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5,
-                        (0, 0, 255), 1)
+        return image, aligned_faces
+
+    def place_faces_on_corners(self, image, aligned_faces):
+
+        h, w = image.shape[:2]
+
+        positions = [
+            (0, 0),                 # top-left
+            (w - 125, 0),           # top-right
+            (0, h - 125),           # bottom-left
+            (w - 125, h - 125)      # bottom-right
+        ]
+
+        for face, (x, y) in zip(aligned_faces, positions):
+
+            if face.shape[0] != 125 or face.shape[1] != 125:
+                continue
+
+            image[y:y+125, x:x+125] = face
 
         return image
 

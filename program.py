@@ -1,13 +1,14 @@
+# pylint: disable=no-member
 import tkinter as tk
+import time
+import os
+from pathlib import Path
+from enum import Enum
 from tkinter import filedialog
 from PIL import ImageTk, Image
 import numpy as np
 import mediapipe as mp
 import cv2
-import os
-from pathlib import Path
-from enum import Enum
-import time
 
 
 class ImgType(Enum):
@@ -82,6 +83,11 @@ class ImageGUI:
         self.bulk_button.grid(row=4, column=1)
 
     def load_single_image(self) -> None:
+        """
+        Opens file dialog so user can select a single image. Displays the 
+        original image and runs face detection, displaying the processed 
+        result, timing and face count info.
+        """
         file_path = filedialog.askopenfilename(
             title="Select Image File",
             filetypes=[("Image Files", "*.png;*.jpg;*.jpeg;*.bmp;*.gif")]
@@ -98,9 +104,7 @@ class ImageGUI:
 
         # Process image
         start_time = time.time()
-
         processed_image, faces = self.find_faces(file_path)
-
         end_time = time.time()
 
         # Update labels
@@ -112,17 +116,15 @@ class ImageGUI:
             text=f"Faces Detected: {len(faces)}"
         )
 
-        # processed_image, face_photos = self.process_image(original_image)
-        # end_time = time.time()
-        # self.processing_time_label.configure(
-        #     text=f"Single Image Processed In: {end_time - start_time:.2f} seconds")
-        # self.faces_found_label.configure(
-        #     text=f"Faces Detected: {len(face_photos)}")
-
         # Display processed image
         self.display_image(processed_image, ImgType.Processed)
 
     def find_faces(self, file_path: str):
+        """
+        Runs the face detector on the image at the given path. Draws 
+        bounding boxes based on confidence scores. Then calls landmark 
+        detection and corner placement. 
+        """
         image = cv2.imread(file_path)
         (h, w) = image.shape[:2]
 
@@ -159,30 +161,6 @@ class ImageGUI:
             cv2.putText(image, text, (startX, y),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 255, 0), 2)
 
-            # # Draw rectangle
-            # cv2.rectangle(
-            #     image,
-            #     (startX, startY),
-            #     (endX, endY),
-            #     (0, 255, 0),
-            #     2
-            # )
-
-            # # Confidence text
-            # text = f"{confidence * 100:.1f}%"
-
-            # y = startY - 10 if startY - 10 > 10 else startY + 10
-
-            # cv2.putText(
-            #     image,
-            #     text,
-            #     (startX, y),
-            #     cv2.FONT_HERSHEY_SIMPLEX,
-            #     0.45,
-            #     (0, 255, 0),
-            #     2
-            # )
-
         image, aligned_faces = self.detect_landmarks(image, clean_image, faces)
         image = self.place_faces_on_corners(image, aligned_faces)
 
@@ -193,7 +171,11 @@ class ImageGUI:
         return output_pil, faces
 
     def align_face(self, image, left_eye, right_eye, nose):
-
+        """
+        Computes an affine transform that maps the three landmark 
+        coordinates to fixed target positions within a 125x125 output
+        in each corner.
+        """
         # Source landmark points
         src_points = np.float32([
             left_eye,
@@ -239,8 +221,10 @@ class ImageGUI:
 
     def detect_landmarks(self, image, clean_image, face_boxes):
         """
-        Detects landmarks, draws them on the display image, and produces
-        clean aligned face thumbnails from the unmodified clean_image.
+        Detects eye and nose landmarks and draws coloured circles on the 
+        display image (green = left eye, red = right eye, blue = nose), 
+        and produces clean aligned face image thumbnail from the unmodified 
+        clean_image.
         """
         image_rgb = cv2.cvtColor(clean_image, cv2.COLOR_BGR2RGB)
         results = self.face_mesh.process(image_rgb)
@@ -290,7 +274,11 @@ class ImageGUI:
         return image, aligned_faces
 
     def place_faces_on_corners(self, image, aligned_faces):
-
+        """
+        Places each 125x125 face image onto a corner of the image in the 
+        order: top left, top right, bottom left, bottom right. If more 
+        than four faces, they are ignored.
+        """
         h, w = image.shape[:2]
 
         positions = [
@@ -320,6 +308,11 @@ class ImageGUI:
         return img, face_photos
 
     def bulk_processing(self) -> None:
+        """
+        Opens a file dialog for the user to select a folder and processes 
+        every image file found in the selected directory, displaying the 
+        original and processed result for each one in sequence.
+        """
         folder_path = filedialog.askdirectory(
             title="Select Folder for Bulk Processing")
         print(f"Selected folder for bulk processing: {folder_path}")
@@ -334,6 +327,10 @@ class ImageGUI:
                 self.display_image(processed_image, ImgType.Processed)
 
     def display_image(self, img: Image.Image, type: ImgType) -> None:
+        """
+        Resizes the given PIL image and displays it in either the 
+        original or processed image label.
+        """
         width, height = img.size
 
         if width > MAX_WIDTH:

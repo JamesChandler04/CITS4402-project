@@ -2,6 +2,7 @@ import tkinter as tk
 from tkinter import filedialog
 from PIL import ImageTk, Image
 import numpy as np
+import mediapipe as mp
 import cv2
 import os
 from pathlib import Path
@@ -27,6 +28,16 @@ class ImageGUI:
         self.net = cv2.dnn.readNetFromCaffe(
             "models/deploy.prototxt",
             "models/res10_300x300_ssd_iter_140000_fp16.caffemodel"
+        )
+
+        # Mediapipe face mesh
+        self.mp_face_mesh = mp.solutions.face_mesh
+
+        self.face_mesh = self.mp_face_mesh.FaceMesh(
+            static_image_mode=True,
+            max_num_faces=10,
+            refine_landmarks=True,
+            min_detection_confidence=0.5
         )
 
         # Set window to correct size at the start, including padding between images
@@ -171,6 +182,8 @@ class ImageGUI:
                     2
                 )
 
+        image = self.detect_landmarks(image, faces)
+
         # Convert BGR → RGB
         image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
 
@@ -178,6 +191,59 @@ class ImageGUI:
         output_pil = Image.fromarray(image_rgb)
 
         return output_pil, faces
+
+    def detect_landmarks(self, image, faces):
+
+        image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+
+        results = self.face_mesh.process(image_rgb)
+
+        if not results.multi_face_landmarks:
+            return image
+
+        h, w = image.shape[:2]
+
+        for face_landmarks in results.multi_face_landmarks:
+
+            # MediaPipe landmark indices
+            LEFT_EYE = 33
+            RIGHT_EYE = 263
+            NOSE_TIP = 1
+
+            # Left eye
+            left_eye = face_landmarks.landmark[LEFT_EYE]
+            lx = int(left_eye.x * w)
+            ly = int(left_eye.y * h)
+
+            # Right eye
+            right_eye = face_landmarks.landmark[RIGHT_EYE]
+            rx = int(right_eye.x * w)
+            ry = int(right_eye.y * h)
+
+            # Nose tip
+            nose = face_landmarks.landmark[NOSE_TIP]
+            nx = int(nose.x * w)
+            ny = int(nose.y * h)
+
+            # Draw landmarks
+            cv2.circle(image, (lx, ly), 4, (255, 0, 0), -1)
+            cv2.circle(image, (rx, ry), 4, (0, 255, 0), -1)
+            cv2.circle(image, (nx, ny), 4, (0, 0, 255), -1)
+
+            # Labels
+            cv2.putText(image, "L Eye", (lx + 5, ly),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5,
+                        (255, 0, 0), 1)
+
+            cv2.putText(image, "R Eye", (rx + 5, ry),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5,
+                        (0, 255, 0), 1)
+
+            cv2.putText(image, "Nose", (nx + 5, ny),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5,
+                        (0, 0, 255), 1)
+
+        return image
 
     def process_image(self, img: Image.Image) -> tuple[Image.Image, list[Image.Image]]:
         photo = ImageTk.PhotoImage(img)

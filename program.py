@@ -297,6 +297,21 @@ class ImageGUI:
 
         return image
 
+    def prepare_output_folder(self, base_folder: str) -> str:
+        output_folder = os.path.join(
+            os.path.dirname(base_folder), "Processed_Images")
+
+        if os.path.exists(output_folder):
+            # Delete contents of folder but keep folder
+            for filename in os.listdir(output_folder):
+                file_path = os.path.join(output_folder, filename)
+                if os.path.isfile(file_path):
+                    os.remove(file_path)
+        else:
+            os.makedirs(output_folder)
+
+        return output_folder
+
     def process_image(self, img: Image.Image) -> tuple[Image.Image, list[Image.Image]]:
         photo = ImageTk.PhotoImage(img)
         face_photos = self.find_faces(img)

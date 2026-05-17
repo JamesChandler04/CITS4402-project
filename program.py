@@ -312,6 +312,13 @@ class ImageGUI:
 
         return output_folder
 
+    def save_cropped_faces(self, cropped_faces: list, output_folder: str, identity: int, face_counter: list) -> None:
+        for face in cropped_faces:
+            filename = f"Identity_{identity}_face_{face_counter[0]}.jpg"
+            save_path = os.path.join(output_folder, filename)
+            cv2.imwrite(save_path, face)
+            face_counter[0] += 1
+
     def process_image(self, img: Image.Image) -> tuple[Image.Image, list[Image.Image]]:
         photo = ImageTk.PhotoImage(img)
         face_photos = self.find_faces(img)

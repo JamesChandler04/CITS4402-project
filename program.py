@@ -24,8 +24,9 @@ class ImageGUI:
         self.master.title("PROJECT Image GUI")
 
         # Load face detector
-        self.face_cascade = cv2.CascadeClassifier(
-            cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
+        self.net = cv2.dnn.readNetFromCaffe(
+            "models/deploy.prototxt",
+            "models/res10_300x300_ssd_iter_140000_fp16.caffemodel"
         )
 
         # Set window to correct size at the start, including padding between images
@@ -110,36 +111,73 @@ class ImageGUI:
         # Display processed image
         self.display_image(processed_image, ImgType.Processed)
 
-    def find_faces(self, file_path: str) -> tuple[Image.Image, list]:
-        cv_image = cv2.imread(file_path)
-        gray = cv2.cvtColor(cv_image, cv2.COLOR_BGR2GRAY)
+    def find_faces(self, file_path: str):
 
-        faces = self.face_cascade.detectMultiScale(
-            gray,
-            scaleFactor=1.3,
-            minNeighbors=5
+        image = cv2.imread(file_path)
+
+        (h, w) = image.shape[:2]
+
+        # Create blob
+        blob = cv2.dnn.blobFromImage(
+            cv2.resize(image, (300, 300)),
+            1.0,
+            (300, 300),
+            (104.0, 177.0, 123.0)
         )
 
-        # Draw rectangles
-        for (x, y, w, h) in faces:
-            cv2.rectangle(cv_image, (x, y), (x+w, y+h), (0, 255, 0), 2)
+        # Run detector
+        self.net.setInput(blob)
 
-        # Convert BGR → RGB for display
-        cv_image_rgb = cv2.cvtColor(cv_image, cv2.COLOR_BGR2RGB)
+        detections = self.net.forward()
+
+        faces = []
+
+        # Loop over detections
+        for i in range(detections.shape[2]):
+
+            confidence = detections[0, 0, i, 2]
+
+            # Ignore weak detections
+            # Test to see if this threshold can be increased for fewer potential false positives (there are none from the sample images tho)
+            if confidence > 0.5:
+
+                box = detections[0, 0, i, 3:7] * np.array([w, h, w, h])
+
+                (startX, startY, endX, endY) = box.astype("int")
+
+                faces.append((startX, startY, endX, endY))
+
+                # Draw rectangle
+                cv2.rectangle(
+                    image,
+                    (startX, startY),
+                    (endX, endY),
+                    (0, 255, 0),
+                    2
+                )
+
+                # Confidence text
+                text = f"{confidence * 100:.1f}%"
+
+                y = startY - 10 if startY - 10 > 10 else startY + 10
+
+                cv2.putText(
+                    image,
+                    text,
+                    (startX, y),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.45,
+                    (0, 255, 0),
+                    2
+                )
+
+        # Convert BGR → RGB
+        image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
 
         # Convert to PIL
-        output_pil = Image.fromarray(cv_image_rgb)
+        output_pil = Image.fromarray(image_rgb)
 
         return output_pil, faces
-
-        # # Resize same way as input
-        # output_pil = output_pil.resize((new_width, new_height))
-
-        # # Display output image
-        # output_photo = ImageTk.PhotoImage(output_pil)
-        # self.processed_image_label.configure(image=output_photo)
-        # self.processed_image_label.image = output_photo
-        # # return []
 
     def process_image(self, img: Image.Image) -> tuple[Image.Image, list[Image.Image]]:
         photo = ImageTk.PhotoImage(img)

@@ -1,374 +1,506 @@
+"""
+CITS4402 Computer Vision Project 2026
+Title: Face Detection and Matching
+
+Group Member 1 Name: James
+Group Member 1 Student Number: 
+
+Group Member 2 Name: Hamza
+Group Member 2 Student Number: 
+
+Group Member 3 Name: James
+Group Member 3 Student Number: 
+"""
+
 # pylint: disable=no-member
-import tkinter as tk
-import time
+
 import os
-from pathlib import Path
+import time
+import tkinter as tk
 from enum import Enum
-from tkinter import filedialog
-from PIL import ImageTk, Image
-import numpy as np
-import mediapipe as mp
+from tkinter import filedialog, messagebox
+
 import cv2
+import mediapipe as mp
+import numpy as np
+from PIL import Image, ImageTk
 
 
 class ImgType(Enum):
-    Original = "original"
-    Processed = "processed"
+    original = "original"
+    processed = "processed"
 
 
-MAX_HEIGHT = 225
-MAX_WIDTH = 300
+maxHeight = 320
+maxWidth = 420
 
 
 class ImageGUI:
     def __init__(self, master: tk.Tk) -> None:
         self.master = master
-        self.master.title("PROJECT Image GUI")
+        self.master.title("CITS4402 Project - Face Detection and Matching")
+        self.master.geometry("1100x760")
+        self.master.minsize(980, 680)
 
-        # Load face detector
-        self.net = cv2.dnn.readNetFromCaffe(
-            "models/deploy.prototxt",
-            "models/res10_300x300_ssd_iter_140000_fp16.caffemodel"
+        # ----------------------------
+        # 1) Load face detector and landmark detector
+        #    Model paths are built relative to the script location
+        #    so the files can be found reliably.
+        # ----------------------------
+        scriptFolder = os.path.dirname(os.path.abspath(__file__))
+        protoPath = os.path.join(scriptFolder, "models", "deploy.prototxt")
+        modelPath = os.path.join(
+            scriptFolder,
+            "models",
+            "res10_300x300_ssd_iter_140000_fp16.caffemodel",
         )
 
-        # Mediapipe face mesh
-        self.mp_face_mesh = mp.solutions.face_mesh
+        if not os.path.exists(protoPath):
+            raise FileNotFoundError(f"Could not find model file: {protoPath}")
 
-        self.face_mesh = self.mp_face_mesh.FaceMesh(
+        if not os.path.exists(modelPath):
+            raise FileNotFoundError(f"Could not find model file: {modelPath}")
+
+        self.net = cv2.dnn.readNetFromCaffe(protoPath, modelPath)
+
+        self.mpFaceMesh = mp.solutions.face_mesh
+        self.faceMesh = self.mpFaceMesh.FaceMesh(
             static_image_mode=True,
             max_num_faces=10,
             refine_landmarks=True,
-            min_detection_confidence=0.5
+            min_detection_confidence=0.5,
         )
 
-        # Set window to correct size at the start, including padding between images
-        self.master.grid_rowconfigure(1, minsize=MAX_HEIGHT + 5)
-        self.master.grid_columnconfigure(0, minsize=MAX_WIDTH + 5)
-        self.master.grid_columnconfigure(1, minsize=MAX_WIDTH + 5)
+        # ----------------------------
+        # 2) Create main title
+        # ----------------------------
+        self.titleLabel = tk.Label(
+            master,
+            text="Face Detection and Matching Project GUI",
+            font=("Arial", 16, "bold"),
+        )
+        self.titleLabel.pack(pady=10)
 
-        # Original image label
-        self.original_text = tk.Label(master, text="Original")
-        self.original_text.grid(row=0, column=0)
+        # ----------------------------
+        # 3) Create image display area
+        #    The input image is shown on the left and the processed
+        #    image is shown on the right.
+        # ----------------------------
+        self.imageFrame = tk.Frame(master)
+        self.imageFrame.pack(pady=10)
 
-        # Processed image label
-        self.processed_text = tk.Label(master, text="Processed")
-        self.processed_text.grid(row=0, column=1)
+        self.originalFrame = tk.LabelFrame(
+            self.imageFrame,
+            text="Input Image",
+            padx=10,
+            pady=10,
+        )
+        self.originalFrame.pack(side="left", padx=10)
 
-        # Original image
-        self.original_image_label = tk.Label(master)
-        self.original_image_label.grid(row=1, column=0, padx=0, pady=0)
+        self.processedFrame = tk.LabelFrame(
+            self.imageFrame,
+            text="Processed Image",
+            padx=10,
+            pady=10,
+        )
+        self.processedFrame.pack(side="left", padx=10)
 
-        # Image after processing
-        self.processed_image_label = tk.Label(master)
-        self.processed_image_label.grid(row=1, column=1, padx=0, pady=0)
+        # Fixed-size container for original image
+        self.originalImageContainer = tk.Frame(
+            self.originalFrame,
+            width=maxWidth,
+            height=maxHeight,
+            bg="white",
+            relief="sunken",
+            bd=1,
+        )
+        self.originalImageContainer.pack()
+        self.originalImageContainer.pack_propagate(False)
 
-        # Processing time label
-        self.processing_time_label = tk.Label(
-            master, text="Single Image Processed In:")
-        self.processing_time_label.grid(
-            row=2, column=0, columnspan=2, sticky="w")
+        self.originalImageLabel = tk.Label(
+            self.originalImageContainer,
+            text="Input image will appear here",
+            bg="white",
+        )
+        self.originalImageLabel.pack(fill="both", expand=True)
 
-        # Faces found label
-        self.faces_found_label = tk.Label(master, text="Faces Detected:")
-        self.faces_found_label.grid(row=3, column=0, columnspan=2, sticky="w")
+        # Fixed-size container for processed image
+        self.processedImageContainer = tk.Frame(
+            self.processedFrame,
+            width=maxWidth,
+            height=maxHeight,
+            bg="white",
+            relief="sunken",
+            bd=1,
+        )
+        self.processedImageContainer.pack()
+        self.processedImageContainer.pack_propagate(False)
 
-        # Load image button
-        self.load_button = tk.Button(
-            master, text="Single Image", command=self.load_single_image)
-        self.load_button.grid(row=4, column=0)
+        self.processedImageLabel = tk.Label(
+            self.processedImageContainer,
+            text="Processed image will appear here",
+            bg="white",
+        )
+        self.processedImageLabel.pack(fill="both", expand=True)
 
-        # Bulk processing button
-        self.bulk_button = tk.Button(
-            master, text="Bulk Processing", command=self.bulk_processing)
-        self.bulk_button.grid(row=4, column=1)
+        # ----------------------------
+        # 4) Create status and result display area
+        #    This section shows processing information and results.
+        # ----------------------------
+        self.textFrame = tk.Frame(master)
+        self.textFrame.pack(fill="x", padx=20, pady=10)
 
+        self.statusVar = tk.StringVar()
+        self.statusVar.set("Ready.")
+
+        self.resultVar = tk.StringVar()
+        self.resultVar.set("No processing yet.")
+
+        self.statusTitleLabel = tk.Label(
+            self.textFrame,
+            text="Status",
+            font=("Arial", 11, "bold"),
+            anchor="w",
+        )
+        self.statusTitleLabel.pack(fill="x")
+
+        self.statusLabel = tk.Label(
+            self.textFrame,
+            textvariable=self.statusVar,
+            anchor="w",
+            justify="left",
+            relief="sunken",
+            padx=8,
+            pady=8,
+        )
+        self.statusLabel.pack(fill="x", pady=(0, 10))
+
+        self.resultTitleLabel = tk.Label(
+            self.textFrame,
+            text="Results",
+            font=("Arial", 11, "bold"),
+            anchor="w",
+        )
+        self.resultTitleLabel.pack(fill="x")
+
+        self.resultLabel = tk.Label(
+            self.textFrame,
+            textvariable=self.resultVar,
+            anchor="w",
+            justify="left",
+            relief="sunken",
+            padx=8,
+            pady=8,
+        )
+        self.resultLabel.pack(fill="x")
+
+        # ----------------------------
+        # 5) Create project buttons
+        #    The GUI contains one button for loading a single image
+        #    and one button for bulk processing.
+        # ----------------------------
+        self.buttonFrame = tk.Frame(master)
+        self.buttonFrame.pack(pady=20)
+
+        self.loadButton = tk.Button(
+            self.buttonFrame,
+            text="Single Image",
+            width=18,
+            command=self.load_single_image,
+        )
+        self.loadButton.grid(row=0, column=0, padx=40)
+
+        self.bulkButton = tk.Button(
+            self.buttonFrame,
+            text="Bulk Processing",
+            width=18,
+            command=self.bulk_processing,
+        )
+        self.bulkButton.grid(row=0, column=1, padx=40)
+
+    # ----------------------------
+    # 6) Load a single image
+    #    This opens a file dialog, displays the input image,
+    #    processes it, and then displays the processed result.
+    # ----------------------------
     def load_single_image(self) -> None:
-        """
-        Opens file dialog so user can select a single image. Displays the 
-        original image and runs face detection, displaying the processed 
-        result, timing and face count info.
-        """
-        file_path = filedialog.askopenfilename(
+        filePath = filedialog.askopenfilename(
             title="Select Image File",
-            filetypes=[("Image Files", "*.png;*.jpg;*.jpeg;*.bmp;*.gif")]
+            filetypes=[("Image Files", "*.png;*.jpg;*.jpeg;*.bmp;*.gif")],
         )
 
-        if not file_path:
+        if not filePath:
+            self.statusVar.set("No image selected.")
+            self.resultVar.set("Waiting for image selection.")
             return
 
-        # Load original image
-        original_image = Image.open(file_path)
+        try:
+            originalImage = Image.open(filePath)
+        except Exception as error:
+            messagebox.showerror("Load Error", f"Could not open the selected image.\n{error}")
+            self.statusVar.set("Failed to load image.")
+            self.resultVar.set("Please try another file.")
+            return
 
-        # Display original
-        self.display_image(original_image, ImgType.Original)
+        self.display_image(originalImage, ImgType.original)
 
-        # Process image
-        start_time = time.time()
-        processed_image, faces = self.find_faces(file_path)
-        end_time = time.time()
+        startTime = time.time()
+        processedImage, faces = self.find_faces(filePath)
+        endTime = time.time()
 
-        # Update labels
-        self.processing_time_label.configure(
-            text=f"Single Image Processed In: {end_time - start_time:.2f} seconds"
+        self.display_image(processedImage, ImgType.processed)
+
+        fileName = os.path.basename(filePath)
+        processingTime = endTime - startTime
+        faceCount = len(faces)
+
+        self.statusVar.set(f"Loaded and processed image successfully: {fileName}")
+        self.resultVar.set(
+            f"Single image processed in {processingTime:.2f} seconds.\n"
+            f"Faces detected: {faceCount}"
         )
 
-        self.faces_found_label.configure(
-            text=f"Faces Detected: {len(faces)}"
-        )
+    # ----------------------------
+    # 7) Detect faces in the image
+    #    This applies the face detector, draws face boxes and
+    #    confidence labels, then performs landmark detection and
+    #    aligned face display.
+    # ----------------------------
+    def find_faces(self, filePath: str):
+        image = cv2.imread(filePath)
 
-        # Display processed image
-        self.display_image(processed_image, ImgType.Processed)
+        if image is None:
+            raise ValueError("Could not read the selected image using OpenCV.")
 
-    def find_faces(self, file_path: str):
-        """
-        Runs the face detector on the image at the given path. Draws 
-        bounding boxes based on confidence scores. Then calls landmark 
-        detection and corner placement. 
-        """
-        image = cv2.imread(file_path)
-        (h, w) = image.shape[:2]
+        imageHeight, imageWidth = image.shape[:2]
 
         blob = cv2.dnn.blobFromImage(
             cv2.resize(image, (300, 300)),
             1.0,
             (300, 300),
-            (104.0, 177.0, 123.0)
+            (104.0, 177.0, 123.0),
         )
 
         self.net.setInput(blob)
         detections = self.net.forward()
 
         faces = []
+        confidenceValues = []
 
-        # Loop over detections
-        for i in range(detections.shape[2]):
-            confidence = detections[0, 0, i, 2]
-            # Ignore weak detections
-            # Test to see if this threshold can be increased for fewer potential false positives (there are none from the sample images tho)
-            if confidence > 0.5:
-                box = detections[0, 0, i, 3:7] * np.array([w, h, w, h])
-                (startX, startY, endX, endY) = box.astype("int")
-                faces.append((startX, startY, endX, endY))
+        # ----------------------------
+        # 8) Collect valid face detections
+        #    Weak detections are ignored using the confidence threshold.
+        # ----------------------------
+        for indexValue in range(detections.shape[2]):
+            confidenceValue = detections[0, 0, indexValue, 2]
 
-        clean_image = image.copy()
+            if confidenceValue > 0.5:
+                box = detections[0, 0, indexValue, 3:7] * np.array(
+                    [imageWidth, imageHeight, imageWidth, imageHeight]
+                )
+                startX, startY, endX, endY = box.astype("int")
 
-        # Draw bounding boxes and confidence labels on the display image only
-        for (startX, startY, endX, endY) in faces:
-            cv2.rectangle(image, (startX, startY),
-                          (endX, endY), (0, 255, 0), 2)
-            text = f"{detections[0, 0, faces.index((startX, startY, endX, endY)), 2] * 100:.1f}%"
-            y = startY - 10 if startY - 10 > 10 else startY + 10
-            cv2.putText(image, text, (startX, y),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 255, 0), 2)
+                startX = max(0, startX)
+                startY = max(0, startY)
+                endX = min(imageWidth - 1, endX)
+                endY = min(imageHeight - 1, endY)
 
-        image, aligned_faces = self.detect_landmarks(image, clean_image, faces)
-        image = self.place_faces_on_corners(image, aligned_faces)
+                if endX > startX and endY > startY:
+                    faces.append((startX, startY, endX, endY))
+                    confidenceValues.append(confidenceValue)
 
-        # Convert BGR → RGB
-        image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-        output_pil = Image.fromarray(image_rgb)
+        cleanImage = image.copy()
 
-        return output_pil, faces
+        # ----------------------------
+        # 9) Draw face boxes and confidence labels
+        #    These are shown on the processed image.
+        # ----------------------------
+        for indexValue, (startX, startY, endX, endY) in enumerate(faces):
+            cv2.rectangle(image, (startX, startY), (endX, endY), (0, 255, 0), 2)
 
-    def align_face(self, image, left_eye, right_eye, nose):
-        """
-        Computes an affine transform that maps the three landmark 
-        coordinates to fixed target positions within a 125x125 output
-        in each corner.
-        """
-        # Source landmark points
-        src_points = np.float32([
-            left_eye,
-            right_eye,
-            nose
-        ])
+            confidenceText = f"{confidenceValues[indexValue] * 100:.1f}%"
+            textY = startY - 10 if startY - 10 > 10 else startY + 15
 
-        # Destination landmark points
-        dst_points = np.float32([
-            [40, 40],
-            [85, 40],
-            [63, 70]
-        ])
+            cv2.putText(
+                image,
+                confidenceText,
+                (startX, textY),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.45,
+                (0, 255, 0),
+                2,
+            )
 
-        # Compute affine transform
-        M = cv2.getAffineTransform(src_points, dst_points)
+        image, alignedFaces = self.detect_landmarks(image, cleanImage, faces)
+        image = self.place_faces_on_corners(image, alignedFaces)
 
-        # Warp image
-        aligned_face = cv2.warpAffine(image, M, (125, 125))
+        imageRgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        outputPil = Image.fromarray(imageRgb)
 
-        return aligned_face
+        return outputPil, faces
 
-    # def get_landmarks(self, face_landmarks, w, h):
+    # ----------------------------
+    # 10) Align a face using three landmarks
+    #     This maps the left eye, right eye, and nose tip to
+    #     fixed target positions in a 125 x 125 output image.
+    # ----------------------------
+    def align_face(self, image, leftEye, rightEye, nose):
+        srcPoints = np.float32([leftEye, rightEye, nose])
 
-    #     LEFT_EYE = 33
-    #     RIGHT_EYE = 263
-    #     NOSE_TIP = 1
+        dstPoints = np.float32(
+            [
+                [40, 40],
+                [85, 40],
+                [63, 70],
+            ]
+        )
 
-    #     left_eye = face_landmarks.landmark[LEFT_EYE]
-    #     right_eye = face_landmarks.landmark[RIGHT_EYE]
-    #     nose = face_landmarks.landmark[NOSE_TIP]
+        transformMatrix = cv2.getAffineTransform(srcPoints, dstPoints)
+        alignedFace = cv2.warpAffine(image, transformMatrix, (125, 125))
 
-    #     lx = int(left_eye.x * w)
-    #     ly = int(left_eye.y * h)
+        return alignedFace
 
-    #     rx = int(right_eye.x * w)
-    #     ry = int(right_eye.y * h)
+    # ----------------------------
+    # 11) Detect facial landmarks
+    #     This detects the left eye, right eye, and nose tip,
+    #     draws them on the processed image, and creates aligned
+    #     face thumbnails.
+    # ----------------------------
+    def detect_landmarks(self, image, cleanImage, faceBoxes):
+        imageRgb = cv2.cvtColor(cleanImage, cv2.COLOR_BGR2RGB)
+        results = self.faceMesh.process(imageRgb)
 
-    #     nx = int(nose.x * w)
-    #     ny = int(nose.y * h)
-
-    #     return (lx, ly), (rx, ry), (nx, ny)
-
-    def detect_landmarks(self, image, clean_image, face_boxes):
-        """
-        Detects eye and nose landmarks and draws coloured circles on the 
-        display image (green = left eye, red = right eye, blue = nose), 
-        and produces clean aligned face image thumbnail from the unmodified 
-        clean_image.
-        """
-        image_rgb = cv2.cvtColor(clean_image, cv2.COLOR_BGR2RGB)
-        results = self.face_mesh.process(image_rgb)
-
-        aligned_faces = []
-        h, w = image.shape[:2]
+        alignedFaces = []
+        imageHeight, imageWidth = image.shape[:2]
 
         if not results.multi_face_landmarks:
-            return image, aligned_faces
+            return image, alignedFaces
 
-        for face_landmarks in results.multi_face_landmarks:
-            LEFT_EYE = 33
-            RIGHT_EYE = 263
-            NOSE_TIP = 1
+        for faceLandmarks in results.multi_face_landmarks:
+            leftEyeIndex = 33
+            rightEyeIndex = 263
+            noseTipIndex = 1
 
-            lx = int(face_landmarks.landmark[LEFT_EYE].x * w)
-            ly = int(face_landmarks.landmark[LEFT_EYE].y * h)
-            rx = int(face_landmarks.landmark[RIGHT_EYE].x * w)
-            ry = int(face_landmarks.landmark[RIGHT_EYE].y * h)
-            nx = int(face_landmarks.landmark[NOSE_TIP].x * w)
-            ny = int(face_landmarks.landmark[NOSE_TIP].y * h)
+            leftX = int(faceLandmarks.landmark[leftEyeIndex].x * imageWidth)
+            leftY = int(faceLandmarks.landmark[leftEyeIndex].y * imageHeight)
 
-            left_eye = (lx, ly)
-            right_eye = (rx, ry)
-            nose = (nx, ny)
+            rightX = int(faceLandmarks.landmark[rightEyeIndex].x * imageWidth)
+            rightY = int(faceLandmarks.landmark[rightEyeIndex].y * imageHeight)
 
-            # Draw landmarks on the display image
-            cv2.circle(image, left_eye,  4, (0, 255, 0), -1)  # green
-            cv2.circle(image, right_eye, 4, (0, 0, 255), -1)  # red
-            cv2.circle(image, nose,      4, (255, 0, 0), -1)  # blue
+            noseX = int(faceLandmarks.landmark[noseTipIndex].x * imageWidth)
+            noseY = int(faceLandmarks.landmark[noseTipIndex].y * imageHeight)
 
-            # FIX 3 cont: Align from the clean full image so warpAffine has
-            # full context. The 125x125 output window acts as the crop.
-            aligned_face = self.align_face(
-                clean_image, left_eye, right_eye, nose)
+            leftEye = (leftX, leftY)
+            rightEye = (rightX, rightY)
+            nose = (noseX, noseY)
 
-            # Draw target landmarks on aligned face thumbnail
-            cv2.circle(aligned_face, (40, 40), 4,
-                       (0, 255, 0), -1)  # green - left eye
-            cv2.circle(aligned_face, (85, 40), 4,
-                       (0, 0, 255), -1)  # red   - right eye
-            cv2.circle(aligned_face, (63, 70), 4,
-                       (255, 0, 0), -1)  # blue  - nose
+            # ----------------------------
+            # 12) Draw landmarks on the original detected face
+            #     green = left eye
+            #     red = right eye
+            #     blue = nose
+            # ----------------------------
+            cv2.circle(image, leftEye, 4, (0, 255, 0), -1)
+            cv2.circle(image, rightEye, 4, (0, 0, 255), -1)
+            cv2.circle(image, nose, 4, (255, 0, 0), -1)
 
-            aligned_faces.append(aligned_face)
+            alignedFace = self.align_face(cleanImage, leftEye, rightEye, nose)
 
-        return image, aligned_faces
+            # ----------------------------
+            # 13) Draw target landmarks on aligned face thumbnail
+            # ----------------------------
+            cv2.circle(alignedFace, (40, 40), 4, (0, 255, 0), -1)
+            cv2.circle(alignedFace, (85, 40), 4, (0, 0, 255), -1)
+            cv2.circle(alignedFace, (63, 70), 4, (255, 0, 0), -1)
 
-    def place_faces_on_corners(self, image, aligned_faces):
-        """
-        Places each 125x125 face image onto a corner of the image in the 
-        order: top left, top right, bottom left, bottom right. If more 
-        than four faces, they are ignored.
-        """
-        h, w = image.shape[:2]
+            alignedFaces.append(alignedFace)
+
+        return image, alignedFaces
+
+    # ----------------------------
+    # 14) Place aligned face thumbnails at the image corners
+    # ----------------------------
+    def place_faces_on_corners(self, image, alignedFaces):
+        imageHeight, imageWidth = image.shape[:2]
 
         positions = [
-            (0, 0),                 # top-left
-            (w - 125, 0),           # top-right
-            (0, h - 125),           # bottom-left
-            (w - 125, h - 125)      # bottom-right
+            (0, 0),
+            (imageWidth - 125, 0),
+            (0, imageHeight - 125),
+            (imageWidth - 125, imageHeight - 125),
         ]
 
-        for face, (x, y) in zip(aligned_faces, positions):
-
-            if face.shape[0] != 125 or face.shape[1] != 125:
+        for faceImage, (xValue, yValue) in zip(alignedFaces, positions):
+            if faceImage.shape[0] != 125 or faceImage.shape[1] != 125:
                 continue
 
-            image[y:y+125, x:x+125] = face
+            image[yValue:yValue + 125, xValue:xValue + 125] = faceImage
 
         return image
 
-    def prepare_output_folder(self, base_folder: str) -> str:
-        output_folder = os.path.join(
-            os.path.dirname(base_folder), "Processed_Images")
+    # ----------------------------
+    # 15) Prepare output folder
+    #    This creates the Processed_Images folder if needed and
+    #    clears old files from it.
+    # ----------------------------
+    def prepare_output_folder(self, baseFolder: str) -> str:
+        outputFolder = os.path.join(os.path.dirname(baseFolder), "Processed_Images")
 
-        if os.path.exists(output_folder):
-            # Delete contents of folder but keep folder
-            for filename in os.listdir(output_folder):
-                file_path = os.path.join(output_folder, filename)
-                if os.path.isfile(file_path):
-                    os.remove(file_path)
+        if os.path.exists(outputFolder):
+            for fileName in os.listdir(outputFolder):
+                filePath = os.path.join(outputFolder, fileName)
+                if os.path.isfile(filePath):
+                    os.remove(filePath)
         else:
-            os.makedirs(output_folder)
+            os.makedirs(outputFolder)
 
-        return output_folder
+        return outputFolder
 
-    def save_cropped_faces(self, cropped_faces: list, output_folder: str, identity: int, face_counter: list) -> None:
-        for face in cropped_faces:
-            filename = f"Identity_{identity}_face_{face_counter[0]}.jpg"
-            save_path = os.path.join(output_folder, filename)
-            cv2.imwrite(save_path, face)
-            face_counter[0] += 1
+    # ----------------------------
+    # 16) Save cropped aligned faces
+    # ----------------------------
+    def save_cropped_faces(self, croppedFaces: list, outputFolder: str, identity: int, faceCounter: list) -> None:
+        for faceImage in croppedFaces:
+            fileName = f"Identity_{identity}_face_{faceCounter[0]}.jpg"
+            savePath = os.path.join(outputFolder, fileName)
+            cv2.imwrite(savePath, faceImage)
+            faceCounter[0] += 1
 
-    def process_image(self, img: Image.Image) -> tuple[Image.Image, list[Image.Image]]:
-        photo = ImageTk.PhotoImage(img)
-        face_photos = self.find_faces(img)
-
-        print(f"Processed image: {photo} and found {len(face_photos)} faces.")
-
-        # TODO: Put face photos into image.
-
-        return img, face_photos
-
+    # ----------------------------
+    # 17) Bulk processing button
+    #    This button is kept in the interface, and currently
+    #    displays a message.
+    # ----------------------------
     def bulk_processing(self) -> None:
-        """
-        Opens a file dialog for the user to select a folder and processes 
-        every image file found in the selected directory, displaying the 
-        original and processed result for each one in sequence.
-        """
-        folder_path = filedialog.askdirectory(
-            title="Select Folder for Bulk Processing")
-        print(f"Selected folder for bulk processing: {folder_path}")
+        self.statusVar.set("Bulk Processing button pressed.")
+        self.resultVar.set("Bulk processing is currently unavailable.")
+        messagebox.showinfo(
+            "Information",
+            "Bulk processing is currently unavailable.",
+        )
 
-        image_extensions = ['.png', '.jpg', '.jpeg', '.bmp', '.gif']
-        for filename in os.listdir(folder_path):
-            if Path(filename).suffix.lower() in image_extensions:
-                file_path = os.path.join(folder_path, filename)
-                original_image = Image.open(file_path)
-                self.display_image(original_image, ImgType.Original)
-                processed_image, new_faces = self.process_image(original_image)
-                self.display_image(processed_image, ImgType.Processed)
+    # ----------------------------
+    # 18) Display an image in the GUI
+    #    The image is resized to fit the fixed display area while
+    #    keeping its aspect ratio.
+    # ----------------------------
+    def display_image(self, img: Image.Image, imageType: ImgType) -> None:
+        widthValue, heightValue = img.size
 
-    def display_image(self, img: Image.Image, type: ImgType) -> None:
-        """
-        Resizes the given PIL image and displays it in either the 
-        original or processed image label.
-        """
-        width, height = img.size
+        scaleValue = min(maxWidth / widthValue, maxHeight / heightValue)
+        newWidth = int(widthValue * scaleValue)
+        newHeight = int(heightValue * scaleValue)
 
-        if width > MAX_WIDTH:
-            new_height = int(height * (MAX_WIDTH / width))
-            img = img.resize((MAX_WIDTH, new_height))
+        resizedImage = img.resize((newWidth, newHeight))
+        photoImage = ImageTk.PhotoImage(resizedImage)
 
-        photo = ImageTk.PhotoImage(img)
+        if imageType == ImgType.original:
+            self.originalImageLabel.configure(image=photoImage, text="")
+            self.originalImageLabel.image = photoImage
 
-        if type == ImgType.Original:
-            self.original_image_label.configure(image=photo)
-            # type: ignore [attr-defined]
-            self.original_image_label.image = photo
-        elif type == ImgType.Processed:
-            self.processed_image_label.configure(image=photo)
-            # type: ignore [attr-defined]
-            self.processed_image_label.image = photo
+        elif imageType == ImgType.processed:
+            self.processedImageLabel.configure(image=photoImage, text="")
+            self.processedImageLabel.image = photoImage
 
 
 if __name__ == "__main__":

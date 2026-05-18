@@ -3,13 +3,13 @@ CITS4402 Computer Vision Project 2026
 Title: Face Detection and Matching
 
 Group Member 1 Name: James
-Group Member 1 Student Number: 
+Group Member 1 Student Number:
 
 Group Member 2 Name: Hamza
-Group Member 2 Student Number: 
+Group Member 2 Student Number:
 
-Group Member 3 Name: James
-Group Member 3 Student Number: 
+Group Member 3 Name: George
+Group Member 3 Student Number:
 """
 
 # pylint: disable=no-member
@@ -66,7 +66,7 @@ class ImageGUI:
         self.mpFaceMesh = mp.solutions.face_mesh
         self.faceMesh = self.mpFaceMesh.FaceMesh(
             static_image_mode=True,
-            max_num_faces=10,
+            max_num_faces=1,
             refine_landmarks=True,
             min_detection_confidence=0.5,
         )
@@ -105,7 +105,6 @@ class ImageGUI:
         )
         self.processedFrame.pack(side="left", padx=10)
 
-        # Fixed-size container for original image
         self.originalImageContainer = tk.Frame(
             self.originalFrame,
             width=maxWidth,
@@ -124,7 +123,6 @@ class ImageGUI:
         )
         self.originalImageLabel.pack(fill="both", expand=True)
 
-        # Fixed-size container for processed image
         self.processedImageContainer = tk.Frame(
             self.processedFrame,
             width=maxWidth,
@@ -237,7 +235,10 @@ class ImageGUI:
         try:
             originalImage = Image.open(filePath)
         except Exception as error:
-            messagebox.showerror("Load Error", f"Could not open the selected image.\n{error}")
+            messagebox.showerror(
+                "Load Error",
+                f"Could not open the selected image.\n{error}",
+            )
             self.statusVar.set("Failed to load image.")
             self.resultVar.set("Please try another file.")
             return
@@ -262,9 +263,8 @@ class ImageGUI:
 
     # ----------------------------
     # 7) Detect faces in the image
-    #    This applies the face detector, draws face boxes and
-    #    confidence labels, then performs landmark detection and
-    #    aligned face display.
+    #    This applies the face detector, draws face boxes, then
+    #    performs landmark detection and aligned face display.
     # ----------------------------
     def find_faces(self, filePath: str):
         image = cv2.imread(filePath)
@@ -285,7 +285,6 @@ class ImageGUI:
         detections = self.net.forward()
 
         faces = []
-        confidenceValues = []
 
         # ----------------------------
         # 8) Collect valid face detections
@@ -307,29 +306,15 @@ class ImageGUI:
 
                 if endX > startX and endY > startY:
                     faces.append((startX, startY, endX, endY))
-                    confidenceValues.append(confidenceValue)
 
         cleanImage = image.copy()
 
         # ----------------------------
-        # 9) Draw face boxes and confidence labels
+        # 9) Draw face boxes
         #    These are shown on the processed image.
         # ----------------------------
-        for indexValue, (startX, startY, endX, endY) in enumerate(faces):
+        for startX, startY, endX, endY in faces:
             cv2.rectangle(image, (startX, startY), (endX, endY), (0, 255, 0), 2)
-
-            confidenceText = f"{confidenceValues[indexValue] * 100:.1f}%"
-            textY = startY - 10 if startY - 10 > 10 else startY + 15
-
-            cv2.putText(
-                image,
-                confidenceText,
-                (startX, textY),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.45,
-                (0, 255, 0),
-                2,
-            )
 
         image, alignedFaces = self.detect_landmarks(image, cleanImage, faces)
         image = self.place_faces_on_corners(image, alignedFaces)
@@ -340,77 +325,195 @@ class ImageGUI:
         return outputPil, faces
 
     # ----------------------------
-    # 10) Align a face using three landmarks
-    #     This maps the left eye, right eye, and nose tip to
-    #     fixed target positions in a 125 x 125 output image.
+    # 10) Expand a detected face box
+    #     This gives the landmark detector more face context
+    #     around the forehead, cheeks, and chin so the aligned
+    #     corner image captures more of the whole face.
     # ----------------------------
-    def align_face(self, image, leftEye, rightEye, nose):
-        srcPoints = np.float32([leftEye, rightEye, nose])
+    def expand_face_box(self, faceBox, imageWidth, imageHeight):
+        startX, startY, endX, endY = faceBox
 
+        faceWidth = endX - startX
+        faceHeight = endY - startY
+
+        xMargin = int(0.35 * faceWidth)
+        topMargin = int(0.50 * faceHeight)
+        bottomMargin = int(0.35 * faceHeight)
+
+        newStartX = max(0, startX - xMargin)
+        newStartY = max(0, startY - topMargin)
+        newEndX = min(imageWidth, endX + xMargin)
+        newEndY = min(imageHeight, endY + bottomMargin)
+
+        return newStartX, newStartY, newEndX, newEndY
+
+    # ----------------------------
+    # 11) Compute eye centre
+    #     The eye centre is calculated from multiple landmarks
+    #     instead of a single point, which gives more stable
+    #     alignment and reduces stretching.
+    # ----------------------------
+    def compute_eye_center(self, faceLandmarks, eyeIndices, cropWidth, cropHeight):
+        eyePoints = []
+
+        for indexValue in eyeIndices:
+            pointX = faceLandmarks.landmark[indexValue].x * cropWidth
+            pointY = faceLandmarks.landmark[indexValue].y * cropHeight
+            eyePoints.append((pointX, pointY))
+
+        eyePoints = np.array(eyePoints, dtype=np.float32)
+        centerX = int(np.mean(eyePoints[:, 0]))
+        centerY = int(np.mean(eyePoints[:, 1]))
+
+        return centerX, centerY
+
+    # ----------------------------
+    # 12) Align a face using three landmarks
+    #     A similarity transform is used so the aligned face is
+    #     rotated and scaled without the strong shear that causes
+    #     stretched corner thumbnails.
+    # ----------------------------
+    def align_face(self, faceImage, rightEye, leftEye, nose):
+        rightEyePoint = np.float32(rightEye)
+        leftEyePoint = np.float32(leftEye)
+        nosePoint = np.float32(nose)
+
+        if rightEyePoint[0] > leftEyePoint[0]:
+            rightEyePoint, leftEyePoint = leftEyePoint, rightEyePoint
+
+        eyeDistance = np.linalg.norm(rightEyePoint - leftEyePoint)
+
+        if eyeDistance < 10:
+            return None
+
+        srcPoints = np.float32([rightEyePoint, leftEyePoint, nosePoint]).reshape(-1, 1, 2)
         dstPoints = np.float32(
             [
                 [40, 40],
                 [85, 40],
                 [63, 70],
             ]
-        )
+        ).reshape(-1, 1, 2)
 
-        transformMatrix = cv2.getAffineTransform(srcPoints, dstPoints)
-        alignedFace = cv2.warpAffine(image, transformMatrix, (125, 125))
+        transformMatrix, _ = cv2.estimateAffinePartial2D(srcPoints, dstPoints)
+
+        if transformMatrix is None:
+            return None
+
+        alignedFace = cv2.warpAffine(
+            faceImage,
+            transformMatrix,
+            (125, 125),
+            flags=cv2.INTER_LINEAR,
+            borderMode=cv2.BORDER_REPLICATE,
+        )
 
         return alignedFace
 
     # ----------------------------
-    # 11) Detect facial landmarks
-    #     This detects the left eye, right eye, and nose tip,
-    #     draws them on the processed image, and creates aligned
-    #     face thumbnails.
+    # 13) Detect facial landmarks
+    #     Landmarks are detected inside each detected face region
+    #     so the aligned face thumbnails become more stable.
     # ----------------------------
     def detect_landmarks(self, image, cleanImage, faceBoxes):
-        imageRgb = cv2.cvtColor(cleanImage, cv2.COLOR_BGR2RGB)
-        results = self.faceMesh.process(imageRgb)
-
         alignedFaces = []
         imageHeight, imageWidth = image.shape[:2]
 
-        if not results.multi_face_landmarks:
-            return image, alignedFaces
+        firstEyeIndices = [33, 133, 159, 145, 158, 153]
+        secondEyeIndices = [362, 263, 386, 374, 385, 380]
+        noseTipIndex = 1
 
-        for faceLandmarks in results.multi_face_landmarks:
-            leftEyeIndex = 33
-            rightEyeIndex = 263
-            noseTipIndex = 1
+        for faceBox in faceBoxes:
+            expandedStartX, expandedStartY, expandedEndX, expandedEndY = self.expand_face_box(
+                faceBox,
+                imageWidth,
+                imageHeight,
+            )
 
-            leftX = int(faceLandmarks.landmark[leftEyeIndex].x * imageWidth)
-            leftY = int(faceLandmarks.landmark[leftEyeIndex].y * imageHeight)
+            faceCrop = cleanImage[
+                expandedStartY:expandedEndY,
+                expandedStartX:expandedEndX,
+            ].copy()
 
-            rightX = int(faceLandmarks.landmark[rightEyeIndex].x * imageWidth)
-            rightY = int(faceLandmarks.landmark[rightEyeIndex].y * imageHeight)
+            if faceCrop.size == 0:
+                continue
 
-            noseX = int(faceLandmarks.landmark[noseTipIndex].x * imageWidth)
-            noseY = int(faceLandmarks.landmark[noseTipIndex].y * imageHeight)
+            faceCropRgb = cv2.cvtColor(faceCrop, cv2.COLOR_BGR2RGB)
+            results = self.faceMesh.process(faceCropRgb)
 
-            leftEye = (leftX, leftY)
-            rightEye = (rightX, rightY)
+            if not results.multi_face_landmarks:
+                continue
+
+            faceLandmarks = results.multi_face_landmarks[0]
+
+            cropHeight, cropWidth = faceCrop.shape[:2]
+
+            firstEye = self.compute_eye_center(
+                faceLandmarks,
+                firstEyeIndices,
+                cropWidth,
+                cropHeight,
+            )
+
+            secondEye = self.compute_eye_center(
+                faceLandmarks,
+                secondEyeIndices,
+                cropWidth,
+                cropHeight,
+            )
+
+            noseX = int(faceLandmarks.landmark[noseTipIndex].x * cropWidth)
+            noseY = int(faceLandmarks.landmark[noseTipIndex].y * cropHeight)
             nose = (noseX, noseY)
 
             # ----------------------------
-            # 12) Draw landmarks on the original detected face
-            #     green = left eye
+            # 14) Determine which eye is on the left side of the image
+            #     The leftmost eye in the image is placed at x = 40
+            #     and the rightmost eye is placed at x = 85.
+            # ----------------------------
+            if firstEye[0] < secondEye[0]:
+                rightEyeLocal = firstEye
+                leftEyeLocal = secondEye
+            else:
+                rightEyeLocal = secondEye
+                leftEyeLocal = firstEye
+
+            rightEyeGlobal = (
+                expandedStartX + rightEyeLocal[0],
+                expandedStartY + rightEyeLocal[1],
+            )
+            leftEyeGlobal = (
+                expandedStartX + leftEyeLocal[0],
+                expandedStartY + leftEyeLocal[1],
+            )
+            noseGlobal = (
+                expandedStartX + nose[0],
+                expandedStartY + nose[1],
+            )
+
+            # ----------------------------
+            # 15) Draw landmarks on the processed image
             #     red = right eye
+            #     green = left eye
             #     blue = nose
             # ----------------------------
-            cv2.circle(image, leftEye, 4, (0, 255, 0), -1)
-            cv2.circle(image, rightEye, 4, (0, 0, 255), -1)
-            cv2.circle(image, nose, 4, (255, 0, 0), -1)
+            cv2.circle(image, rightEyeGlobal, 4, (0, 0, 255), -1)
+            cv2.circle(image, leftEyeGlobal, 4, (0, 255, 0), -1)
+            cv2.circle(image, noseGlobal, 4, (255, 0, 0), -1)
 
-            alignedFace = self.align_face(cleanImage, leftEye, rightEye, nose)
+            alignedFace = self.align_face(faceCrop, rightEyeLocal, leftEyeLocal, nose)
+
+            if alignedFace is None:
+                continue
 
             # ----------------------------
-            # 13) Draw target landmarks on aligned face thumbnail
+            # 16) Draw target landmarks on aligned face thumbnail
+            #     red = right eye
+            #     green = left eye
+            #     blue = nose
             # ----------------------------
-            cv2.circle(alignedFace, (40, 40), 4, (0, 255, 0), -1)
-            cv2.circle(alignedFace, (85, 40), 4, (0, 0, 255), -1)
+            cv2.circle(alignedFace, (40, 40), 4, (0, 0, 255), -1)
+            cv2.circle(alignedFace, (85, 40), 4, (0, 255, 0), -1)
             cv2.circle(alignedFace, (63, 70), 4, (255, 0, 0), -1)
 
             alignedFaces.append(alignedFace)
@@ -418,7 +521,7 @@ class ImageGUI:
         return image, alignedFaces
 
     # ----------------------------
-    # 14) Place aligned face thumbnails at the image corners
+    # 17) Place aligned face thumbnails at the image corners
     # ----------------------------
     def place_faces_on_corners(self, image, alignedFaces):
         imageHeight, imageWidth = image.shape[:2]
@@ -431,6 +534,9 @@ class ImageGUI:
         ]
 
         for faceImage, (xValue, yValue) in zip(alignedFaces, positions):
+            if faceImage is None:
+                continue
+
             if faceImage.shape[0] != 125 or faceImage.shape[1] != 125:
                 continue
 
@@ -439,7 +545,7 @@ class ImageGUI:
         return image
 
     # ----------------------------
-    # 15) Prepare output folder
+    # 18) Prepare output folder
     #    This creates the Processed_Images folder if needed and
     #    clears old files from it.
     # ----------------------------
@@ -457,7 +563,7 @@ class ImageGUI:
         return outputFolder
 
     # ----------------------------
-    # 16) Save cropped aligned faces
+    # 19) Save cropped aligned faces
     # ----------------------------
     def save_cropped_faces(self, croppedFaces: list, outputFolder: str, identity: int, faceCounter: list) -> None:
         for faceImage in croppedFaces:
@@ -467,7 +573,7 @@ class ImageGUI:
             faceCounter[0] += 1
 
     # ----------------------------
-    # 17) Bulk processing button
+    # 20) Bulk processing button
     #    This button is kept in the interface, and currently
     #    displays a message.
     # ----------------------------
@@ -480,7 +586,7 @@ class ImageGUI:
         )
 
     # ----------------------------
-    # 18) Display an image in the GUI
+    # 21) Display an image in the GUI
     #    The image is resized to fit the fixed display area while
     #    keeping its aspect ratio.
     # ----------------------------

@@ -246,25 +246,102 @@ class ImageGUI:
         self.display_image(originalImage, ImgType.original)
 
         startTime = time.time()
-        processedImage, faces = self.find_faces(filePath)
+        processedImage, faces, rawFaceCount = self.find_faces(filePath)
         endTime = time.time()
 
         self.display_image(processedImage, ImgType.processed)
 
         fileName = os.path.basename(filePath)
         processingTime = endTime - startTime
-        faceCount = len(faces)
+        validatedFaceCount = len(faces)
 
         self.statusVar.set(f"Loaded and processed image successfully: {fileName}")
         self.resultVar.set(
             f"Single image processed in {processingTime:.2f} seconds.\n"
-            f"Faces detected: {faceCount}"
+            f"Raw detections: {rawFaceCount}\n"
+            f"Skin validated faces: {validatedFaceCount}"
         )
 
     # ----------------------------
-    # 7) Detect faces in the image
-    #    This applies the face detector, draws face boxes, then
-    #    performs landmark detection and aligned face display.
+    # 7) Create a skin mask from the colour image
+    #    The image is converted to YCrCb and thresholded using
+    #    a standard skin-colour range. The mask is then cleaned
+    #    using morphology.
+    # ----------------------------
+    def create_skin_mask(self, image):
+        yCrCbImage = cv2.cvtColor(image, cv2.COLOR_BGR2YCrCb)
+
+        lowerSkin = np.array([0, 133, 77], dtype=np.uint8)
+        upperSkin = np.array([255, 173, 127], dtype=np.uint8)
+
+        skinMask = cv2.inRange(yCrCbImage, lowerSkin, upperSkin)
+
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+        skinMask = cv2.morphologyEx(skinMask, cv2.MORPH_OPEN, kernel)
+        skinMask = cv2.morphologyEx(skinMask, cv2.MORPH_CLOSE, kernel)
+        skinMask = cv2.GaussianBlur(skinMask, (5, 5), 0)
+
+        return skinMask
+
+    # ----------------------------
+    # 8) Compute skin ratio inside a detected face box
+    #    Both the full box and the central region are checked.
+    #    The central region is helpful because the center of a
+    #    real face box should contain strong skin evidence.
+    # ----------------------------
+    def compute_skin_ratio(self, skinMask, faceBox):
+        startX, startY, endX, endY = faceBox
+
+        faceMask = skinMask[startY:endY, startX:endX]
+
+        if faceMask.size == 0:
+            return 0.0, 0.0
+
+        overallRatio = np.count_nonzero(faceMask) / faceMask.size
+
+        boxHeight, boxWidth = faceMask.shape[:2]
+        xMargin = int(0.2 * boxWidth)
+        yMargin = int(0.2 * boxHeight)
+
+        centerMask = faceMask[
+            yMargin:boxHeight - yMargin,
+            xMargin:boxWidth - xMargin,
+        ]
+
+        if centerMask.size == 0:
+            centerRatio = overallRatio
+        else:
+            centerRatio = np.count_nonzero(centerMask) / centerMask.size
+
+        return overallRatio, centerRatio
+
+    # ----------------------------
+    # 9) Validate face detections using skin colour evidence
+    #    A detection is kept if enough skin pixels are present
+    #    inside the face box. If none survive, the raw detections
+    #    are kept to avoid dropping all faces from one image.
+    # ----------------------------
+    def filter_face_boxes_with_skin(self, faceBoxes, skinMask):
+        validatedFaces = []
+
+        for faceBox in faceBoxes:
+            overallRatio, centerRatio = self.compute_skin_ratio(skinMask, faceBox)
+
+            if overallRatio >= 0.08 and centerRatio >= 0.12:
+                validatedFaces.append(faceBox)
+            elif overallRatio >= 0.14:
+                validatedFaces.append(faceBox)
+
+        if len(faceBoxes) > 0 and len(validatedFaces) == 0:
+            return faceBoxes
+
+        return validatedFaces
+
+    # ----------------------------
+    # 10) Detect faces in the image
+    #     This applies the face detector, uses skin colour
+    #     segmentation to validate detections, then performs
+    #     landmark detection and aligned face display.
     # ----------------------------
     def find_faces(self, filePath: str):
         image = cv2.imread(filePath)
@@ -284,11 +361,11 @@ class ImageGUI:
         self.net.setInput(blob)
         detections = self.net.forward()
 
-        faces = []
+        rawFaces = []
 
         # ----------------------------
-        # 8) Collect valid face detections
-        #    Weak detections are ignored using the confidence threshold.
+        # 11) Collect raw face detections
+        #     Weak detections are ignored using the confidence threshold.
         # ----------------------------
         for indexValue in range(detections.shape[2]):
             confidenceValue = detections[0, 0, indexValue, 2]
@@ -305,13 +382,21 @@ class ImageGUI:
                 endY = min(imageHeight - 1, endY)
 
                 if endX > startX and endY > startY:
-                    faces.append((startX, startY, endX, endY))
+                    rawFaces.append((startX, startY, endX, endY))
 
         cleanImage = image.copy()
 
         # ----------------------------
-        # 9) Draw face boxes
-        #    These are shown on the processed image.
+        # 12) Create skin mask and validate detections
+        #     The final face boxes are the detections supported
+        #     by skin-colour evidence.
+        # ----------------------------
+        skinMask = self.create_skin_mask(cleanImage)
+        faces = self.filter_face_boxes_with_skin(rawFaces, skinMask)
+
+        # ----------------------------
+        # 13) Draw final validated face boxes
+        #     These are shown on the processed image.
         # ----------------------------
         for startX, startY, endX, endY in faces:
             cv2.rectangle(image, (startX, startY), (endX, endY), (0, 255, 0), 2)
@@ -322,10 +407,10 @@ class ImageGUI:
         imageRgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         outputPil = Image.fromarray(imageRgb)
 
-        return outputPil, faces
+        return outputPil, faces, len(rawFaces)
 
     # ----------------------------
-    # 10) Expand a detected face box
+    # 14) Expand a detected face box
     #     This gives the landmark detector more face context
     #     around the forehead, cheeks, and chin so the aligned
     #     corner image captures more of the whole face.
@@ -348,7 +433,7 @@ class ImageGUI:
         return newStartX, newStartY, newEndX, newEndY
 
     # ----------------------------
-    # 11) Compute eye centre
+    # 15) Compute eye centre
     #     The eye centre is calculated from multiple landmarks
     #     instead of a single point, which gives more stable
     #     alignment and reduces stretching.
@@ -368,7 +453,7 @@ class ImageGUI:
         return centerX, centerY
 
     # ----------------------------
-    # 12) Align a face using three landmarks
+    # 16) Align a face using three landmarks
     #     A similarity transform is used so the aligned face is
     #     rotated and scaled without the strong shear that causes
     #     stretched corner thumbnails.
@@ -411,7 +496,7 @@ class ImageGUI:
         return alignedFace
 
     # ----------------------------
-    # 13) Detect facial landmarks
+    # 17) Detect facial landmarks
     #     Landmarks are detected inside each detected face region
     #     so the aligned face thumbnails become more stable.
     # ----------------------------
@@ -467,7 +552,7 @@ class ImageGUI:
             nose = (noseX, noseY)
 
             # ----------------------------
-            # 14) Determine which eye is on the left side of the image
+            # 18) Determine which eye is on the left side of the image
             #     The leftmost eye in the image is placed at x = 40
             #     and the rightmost eye is placed at x = 85.
             # ----------------------------
@@ -492,7 +577,7 @@ class ImageGUI:
             )
 
             # ----------------------------
-            # 15) Draw landmarks on the processed image
+            # 19) Draw landmarks on the processed image
             #     red = right eye
             #     green = left eye
             #     blue = nose
@@ -507,7 +592,7 @@ class ImageGUI:
                 continue
 
             # ----------------------------
-            # 16) Draw target landmarks on aligned face thumbnail
+            # 20) Draw target landmarks on aligned face thumbnail
             #     red = right eye
             #     green = left eye
             #     blue = nose
@@ -521,7 +606,7 @@ class ImageGUI:
         return image, alignedFaces
 
     # ----------------------------
-    # 17) Place aligned face thumbnails at the image corners
+    # 21) Place aligned face thumbnails at the image corners
     # ----------------------------
     def place_faces_on_corners(self, image, alignedFaces):
         imageHeight, imageWidth = image.shape[:2]
@@ -545,7 +630,7 @@ class ImageGUI:
         return image
 
     # ----------------------------
-    # 18) Prepare output folder
+    # 22) Prepare output folder
     #    This creates the Processed_Images folder if needed and
     #    clears old files from it.
     # ----------------------------
@@ -563,7 +648,7 @@ class ImageGUI:
         return outputFolder
 
     # ----------------------------
-    # 19) Save cropped aligned faces
+    # 23) Save cropped aligned faces
     # ----------------------------
     def save_cropped_faces(self, croppedFaces: list, outputFolder: str, identity: int, faceCounter: list) -> None:
         for faceImage in croppedFaces:
@@ -573,7 +658,7 @@ class ImageGUI:
             faceCounter[0] += 1
 
     # ----------------------------
-    # 20) Bulk processing button
+    # 24) Bulk processing button
     #    This button is kept in the interface, and currently
     #    displays a message.
     # ----------------------------
@@ -586,7 +671,7 @@ class ImageGUI:
         )
 
     # ----------------------------
-    # 21) Display an image in the GUI
+    # 25) Display an image in the GUI
     #    The image is resized to fit the fixed display area while
     #    keeping its aspect ratio.
     # ----------------------------

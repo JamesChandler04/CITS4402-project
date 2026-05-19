@@ -246,7 +246,7 @@ class ImageGUI:
         self.display_image(originalImage, ImgType.original)
 
         startTime = time.time()
-        processedImage, faces, rawFaceCount = self.find_faces(filePath)
+        processedImage, faces, rawFaceCount, _alignedFacesClean = self.find_faces(filePath)
         endTime = time.time()
 
         self.display_image(processedImage, ImgType.processed)
@@ -286,8 +286,6 @@ class ImageGUI:
     # ----------------------------
     # 8) Compute skin ratio inside a detected face box
     #    Both the full box and the central region are checked.
-    #    The central region is helpful because the center of a
-    #    real face box should contain strong skin evidence.
     # ----------------------------
     def compute_skin_ratio(self, skinMask, faceBox):
         startX, startY, endX, endY = faceBox
@@ -401,13 +399,13 @@ class ImageGUI:
         for startX, startY, endX, endY in faces:
             cv2.rectangle(image, (startX, startY), (endX, endY), (0, 255, 0), 2)
 
-        image, alignedFaces = self.detect_landmarks(image, cleanImage, faces)
-        image = self.place_faces_on_corners(image, alignedFaces)
+        image, alignedFacesDisplay, alignedFacesClean = self.detect_landmarks(image, cleanImage, faces)
+        image = self.place_faces_on_corners(image, alignedFacesDisplay)
 
         imageRgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         outputPil = Image.fromarray(imageRgb)
 
-        return outputPil, faces, len(rawFaces)
+        return outputPil, faces, len(rawFaces), alignedFacesClean
 
     # ----------------------------
     # 14) Expand a detected face box
@@ -497,11 +495,13 @@ class ImageGUI:
 
     # ----------------------------
     # 17) Detect facial landmarks
-    #     Landmarks are detected inside each detected face region
-    #     so the aligned face thumbnails become more stable.
+    #     Landmarks are detected inside each detected face region.
+    #     One aligned-face list is prepared for GUI display with
+    #     landmarks, and another clean list is prepared for saving.
     # ----------------------------
     def detect_landmarks(self, image, cleanImage, faceBoxes):
-        alignedFaces = []
+        alignedFacesDisplay = []
+        alignedFacesClean = []
         imageHeight, imageWidth = image.shape[:2]
 
         firstEyeIndices = [33, 133, 159, 145, 158, 153]
@@ -586,10 +586,12 @@ class ImageGUI:
             cv2.circle(image, leftEyeGlobal, 4, (0, 255, 0), -1)
             cv2.circle(image, noseGlobal, 4, (255, 0, 0), -1)
 
-            alignedFace = self.align_face(faceCrop, rightEyeLocal, leftEyeLocal, nose)
+            alignedFaceClean = self.align_face(faceCrop, rightEyeLocal, leftEyeLocal, nose)
 
-            if alignedFace is None:
+            if alignedFaceClean is None:
                 continue
+
+            alignedFaceDisplay = alignedFaceClean.copy()
 
             # ----------------------------
             # 20) Draw target landmarks on aligned face thumbnail
@@ -597,13 +599,14 @@ class ImageGUI:
             #     green = left eye
             #     blue = nose
             # ----------------------------
-            cv2.circle(alignedFace, (40, 40), 4, (0, 0, 255), -1)
-            cv2.circle(alignedFace, (85, 40), 4, (0, 255, 0), -1)
-            cv2.circle(alignedFace, (63, 70), 4, (255, 0, 0), -1)
+            cv2.circle(alignedFaceDisplay, (40, 40), 4, (0, 0, 255), -1)
+            cv2.circle(alignedFaceDisplay, (85, 40), 4, (0, 255, 0), -1)
+            cv2.circle(alignedFaceDisplay, (63, 70), 4, (255, 0, 0), -1)
 
-            alignedFaces.append(alignedFace)
+            alignedFacesDisplay.append(alignedFaceDisplay)
+            alignedFacesClean.append(alignedFaceClean)
 
-        return image, alignedFaces
+        return image, alignedFacesDisplay, alignedFacesClean
 
     # ----------------------------
     # 21) Place aligned face thumbnails at the image corners
@@ -649,25 +652,96 @@ class ImageGUI:
 
     # ----------------------------
     # 23) Save cropped aligned faces
+    #    These saved outputs do not contain landmark markers.
     # ----------------------------
-    def save_cropped_faces(self, croppedFaces: list, outputFolder: str, identity: int, faceCounter: list) -> None:
+    def save_cropped_faces(self, croppedFaces: list, outputFolder: str, faceCounter: list) -> None:
         for faceImage in croppedFaces:
-            fileName = f"Identity_{identity}_face_{faceCounter[0]}.jpg"
+            if faceImage is None:
+                continue
+
+            if faceImage.shape[0] != 125 or faceImage.shape[1] != 125:
+                continue
+
+            fileName = f"face_{faceCounter[0]:04d}.jpg"
             savePath = os.path.join(outputFolder, fileName)
             cv2.imwrite(savePath, faceImage)
             faceCounter[0] += 1
 
     # ----------------------------
     # 24) Bulk processing button
-    #    This button is kept in the interface, and currently
-    #    displays a message.
+    #    This opens a folder, processes all images in it, saves
+    #    aligned face crops into Processed_Images, and displays
+    #    a summary in the GUI.
     # ----------------------------
     def bulk_processing(self) -> None:
-        self.statusVar.set("Bulk Processing button pressed.")
-        self.resultVar.set("Bulk processing is currently unavailable.")
+        folderPath = filedialog.askdirectory(title="Select Folder for Bulk Processing")
+
+        if not folderPath:
+            self.statusVar.set("No folder selected.")
+            self.resultVar.set("Waiting for folder selection.")
+            return
+
+        imageExtensions = [".png", ".jpg", ".jpeg", ".bmp", ".gif", ".tif", ".tiff"]
+        imageFiles = []
+
+        for fileName in os.listdir(folderPath):
+            fullPath = os.path.join(folderPath, fileName)
+            extension = os.path.splitext(fileName)[1].lower()
+
+            if os.path.isfile(fullPath) and extension in imageExtensions:
+                imageFiles.append(fullPath)
+
+        if len(imageFiles) == 0:
+            messagebox.showwarning("No Images", "No image files were found in the selected folder.")
+            self.statusVar.set("No valid images found in selected folder.")
+            self.resultVar.set("Please choose another folder.")
+            return
+
+        outputFolder = self.prepare_output_folder(folderPath)
+
+        totalImagesProcessed = 0
+        totalRawDetections = 0
+        totalValidatedFaces = 0
+        faceCounter = [1]
+
+        startTime = time.time()
+
+        for filePath in imageFiles:
+            try:
+                originalImage = Image.open(filePath)
+                processedImage, faces, rawFaceCount, alignedFacesClean = self.find_faces(filePath)
+
+                self.display_image(originalImage, ImgType.original)
+                self.display_image(processedImage, ImgType.processed)
+                self.master.update_idletasks()
+
+                self.save_cropped_faces(alignedFacesClean, outputFolder, faceCounter)
+
+                totalImagesProcessed += 1
+                totalRawDetections += rawFaceCount
+                totalValidatedFaces += len(faces)
+
+            except Exception:
+                continue
+
+        endTime = time.time()
+        processingTime = endTime - startTime
+        totalSavedFaces = faceCounter[0] - 1
+
+        self.statusVar.set(
+            f"Bulk processing completed successfully. Output folder: {outputFolder}"
+        )
+        self.resultVar.set(
+            f"Bulk processing completed in {processingTime:.2f} seconds.\n"
+            f"Images processed: {totalImagesProcessed}\n"
+            f"Raw detections: {totalRawDetections}\n"
+            f"Skin validated faces: {totalValidatedFaces}\n"
+            f"Aligned faces saved: {totalSavedFaces}"
+        )
+
         messagebox.showinfo(
-            "Information",
-            "Bulk processing is currently unavailable.",
+            "Bulk Processing Complete",
+            f"Processed {totalImagesProcessed} image(s) and saved {totalSavedFaces} aligned face(s).",
         )
 
     # ----------------------------

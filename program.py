@@ -3,7 +3,7 @@ CITS4402 Computer Vision Project 2026
 Title: Face Detection and Matching
 
 Group Member 1 Name: James
-Group Member 1 Student Number:
+Group Member 1 Student Number: 23348041
 
 Group Member 2 Name: Hamza
 Group Member 2 Student Number:
@@ -22,6 +22,8 @@ from tkinter import filedialog, messagebox
 
 import cv2
 import mediapipe as mp
+from mediapipe.tasks import python as mp_tasks
+from mediapipe.tasks.python import vision as mp_vision
 import numpy as np
 from PIL import Image, ImageTk
 
@@ -63,13 +65,16 @@ class ImageGUI:
 
         self.net = cv2.dnn.readNetFromCaffe(protoPath, modelPath)
 
-        self.mpFaceMesh = mp.solutions.face_mesh
-        self.faceMesh = self.mpFaceMesh.FaceMesh(
-            static_image_mode=True,
-            max_num_faces=1,
-            refine_landmarks=True,
-            min_detection_confidence=0.5,
+        landmarkerPath = os.path.join(scriptFolder, "models", "face_landmarker.task")
+        if not os.path.exists(landmarkerPath):
+            raise FileNotFoundError(f"Could not find model file: {landmarkerPath}")
+        baseOptions = mp_tasks.BaseOptions(model_asset_path=landmarkerPath)
+        options = mp_vision.FaceLandmarkerOptions(
+            base_options=baseOptions,
+            num_faces=4,
+            min_face_detection_confidence=0.5,
         )
+        self.faceMesh = mp_vision.FaceLandmarker.create_from_options(options)
 
         # ----------------------------
         # 2) Create main title
@@ -440,8 +445,8 @@ class ImageGUI:
         eyePoints = []
 
         for indexValue in eyeIndices:
-            pointX = faceLandmarks.landmark[indexValue].x * cropWidth
-            pointY = faceLandmarks.landmark[indexValue].y * cropHeight
+            pointX = faceLandmarks[indexValue].x * cropWidth
+            pointY = faceLandmarks[indexValue].y * cropHeight
             eyePoints.append((pointX, pointY))
 
         eyePoints = np.array(eyePoints, dtype=np.float32)
@@ -524,12 +529,13 @@ class ImageGUI:
                 continue
 
             faceCropRgb = cv2.cvtColor(faceCrop, cv2.COLOR_BGR2RGB)
-            results = self.faceMesh.process(faceCropRgb)
+            mpImage = mp.Image(image_format=mp.ImageFormat.SRGB, data=faceCropRgb)
+            results = self.faceMesh.detect(mpImage)
 
-            if not results.multi_face_landmarks:
+            if not results.face_landmarks:
                 continue
 
-            faceLandmarks = results.multi_face_landmarks[0]
+            faceLandmarks = results.face_landmarks[0]
 
             cropHeight, cropWidth = faceCrop.shape[:2]
 
@@ -547,8 +553,8 @@ class ImageGUI:
                 cropHeight,
             )
 
-            noseX = int(faceLandmarks.landmark[noseTipIndex].x * cropWidth)
-            noseY = int(faceLandmarks.landmark[noseTipIndex].y * cropHeight)
+            noseX = int(faceLandmarks[noseTipIndex].x * cropWidth)
+            noseY = int(faceLandmarks[noseTipIndex].y * cropHeight)
             nose = (noseX, noseY)
 
             # ----------------------------

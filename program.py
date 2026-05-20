@@ -27,6 +27,13 @@ from mediapipe.tasks.python import vision as mp_vision
 import numpy as np
 from PIL import Image, ImageTk
 
+try:
+    from sklearn.cluster import AgglomerativeClustering
+    from sklearn.metrics import silhouette_score
+except ImportError:
+    AgglomerativeClustering = None
+    silhouette_score = None
+
 
 class ImgType(Enum):
     original = "original"
@@ -68,6 +75,7 @@ class ImageGUI:
         landmarkerPath = os.path.join(scriptFolder, "models", "face_landmarker.task")
         if not os.path.exists(landmarkerPath):
             raise FileNotFoundError(f"Could not find model file: {landmarkerPath}")
+
         baseOptions = mp_tasks.BaseOptions(model_asset_path=landmarkerPath)
         options = mp_vision.FaceLandmarkerOptions(
             base_options=baseOptions,
@@ -77,7 +85,16 @@ class ImageGUI:
         self.faceMesh = mp_vision.FaceLandmarker.create_from_options(options)
 
         # ----------------------------
-        # 2) Create main title
+        # 2) Prepare face feature extractor and clustering state
+        #    buffalo_l embeddings will be used later for identity
+        #    clustering in bulk processing.
+        # ----------------------------
+        self.faceEmbeddingApp = None
+        self.faceRecognizer = None
+        self.bulkFaceRecords = []
+
+        # ----------------------------
+        # 3) Create main title
         # ----------------------------
         self.titleLabel = tk.Label(
             master,
@@ -87,7 +104,7 @@ class ImageGUI:
         self.titleLabel.pack(pady=10)
 
         # ----------------------------
-        # 3) Create image display area
+        # 4) Create image display area
         #    The input image is shown on the left and the processed
         #    image is shown on the right.
         # ----------------------------
@@ -147,7 +164,7 @@ class ImageGUI:
         self.processedImageLabel.pack(fill="both", expand=True)
 
         # ----------------------------
-        # 4) Create status and result display area
+        # 5) Create status and result display area
         #    This section shows processing information and results.
         # ----------------------------
         self.textFrame = tk.Frame(master)
@@ -198,7 +215,7 @@ class ImageGUI:
         self.resultLabel.pack(fill="x")
 
         # ----------------------------
-        # 5) Create project buttons
+        # 6) Create project buttons
         #    The GUI contains one button for loading a single image
         #    and one button for bulk processing.
         # ----------------------------
@@ -222,7 +239,7 @@ class ImageGUI:
         self.bulkButton.grid(row=0, column=1, padx=40)
 
     # ----------------------------
-    # 6) Load a single image
+    # 7) Load a single image
     #    This opens a file dialog, displays the input image,
     #    processes it, and then displays the processed result.
     # ----------------------------
@@ -268,7 +285,7 @@ class ImageGUI:
         )
 
     # ----------------------------
-    # 7) Create a skin mask from the colour image
+    # 8) Create a skin mask from the colour image
     #    The image is converted to YCrCb and thresholded using
     #    a standard skin-colour range. The mask is then cleaned
     #    using morphology.
@@ -289,7 +306,7 @@ class ImageGUI:
         return skinMask
 
     # ----------------------------
-    # 8) Compute skin ratio inside a detected face box
+    # 9) Compute skin ratio inside a detected face box
     #    Both the full box and the central region are checked.
     # ----------------------------
     def compute_skin_ratio(self, skinMask, faceBox):
@@ -319,10 +336,10 @@ class ImageGUI:
         return overallRatio, centerRatio
 
     # ----------------------------
-    # 9) Validate face detections using skin colour evidence
-    #    A detection is kept if enough skin pixels are present
-    #    inside the face box. If none survive, the raw detections
-    #    are kept to avoid dropping all faces from one image.
+    # 10) Validate face detections using skin colour evidence
+    #     A detection is kept if enough skin pixels are present
+    #     inside the face box. If none survive, the raw detections
+    #     are kept to avoid dropping all faces from one image.
     # ----------------------------
     def filter_face_boxes_with_skin(self, faceBoxes, skinMask):
         validatedFaces = []
@@ -341,7 +358,7 @@ class ImageGUI:
         return validatedFaces
 
     # ----------------------------
-    # 10) Detect faces in the image
+    # 11) Detect faces in the image
     #     This applies the face detector, uses skin colour
     #     segmentation to validate detections, then performs
     #     landmark detection and aligned face display.
@@ -367,7 +384,7 @@ class ImageGUI:
         rawFaces = []
 
         # ----------------------------
-        # 11) Collect raw face detections
+        # 12) Collect raw face detections
         #     Weak detections are ignored using the confidence threshold.
         # ----------------------------
         for indexValue in range(detections.shape[2]):
@@ -390,7 +407,7 @@ class ImageGUI:
         cleanImage = image.copy()
 
         # ----------------------------
-        # 12) Create skin mask and validate detections
+        # 13) Create skin mask and validate detections
         #     The final face boxes are the detections supported
         #     by skin-colour evidence.
         # ----------------------------
@@ -398,7 +415,7 @@ class ImageGUI:
         faces = self.filter_face_boxes_with_skin(rawFaces, skinMask)
 
         # ----------------------------
-        # 13) Draw final validated face boxes
+        # 14) Draw final validated face boxes
         #     These are shown on the processed image.
         # ----------------------------
         for startX, startY, endX, endY in faces:
@@ -413,7 +430,7 @@ class ImageGUI:
         return outputPil, faces, len(rawFaces), alignedFacesClean
 
     # ----------------------------
-    # 14) Expand a detected face box
+    # 15) Expand a detected face box
     #     This gives the landmark detector more face context
     #     around the forehead, cheeks, and chin so the aligned
     #     corner image captures more of the whole face.
@@ -436,7 +453,7 @@ class ImageGUI:
         return newStartX, newStartY, newEndX, newEndY
 
     # ----------------------------
-    # 15) Compute eye centre
+    # 16) Compute eye centre
     #     The eye centre is calculated from multiple landmarks
     #     instead of a single point, which gives more stable
     #     alignment and reduces stretching.
@@ -456,7 +473,7 @@ class ImageGUI:
         return centerX, centerY
 
     # ----------------------------
-    # 16) Align a face using three landmarks
+    # 17) Align a face using three landmarks
     #     A similarity transform is used so the aligned face is
     #     rotated and scaled without the strong shear that causes
     #     stretched corner thumbnails.
@@ -499,7 +516,7 @@ class ImageGUI:
         return alignedFace
 
     # ----------------------------
-    # 17) Detect facial landmarks
+    # 18) Detect facial landmarks
     #     Landmarks are detected inside each detected face region.
     #     One aligned-face list is prepared for GUI display with
     #     landmarks, and another clean list is prepared for saving.
@@ -558,7 +575,7 @@ class ImageGUI:
             nose = (noseX, noseY)
 
             # ----------------------------
-            # 18) Determine which eye is on the left side of the image
+            # 19) Determine which eye is on the left side of the image
             #     The leftmost eye in the image is placed at x = 40
             #     and the rightmost eye is placed at x = 85.
             # ----------------------------
@@ -583,7 +600,7 @@ class ImageGUI:
             )
 
             # ----------------------------
-            # 19) Draw landmarks on the processed image
+            # 20) Draw landmarks on the processed image
             #     red = right eye
             #     green = left eye
             #     blue = nose
@@ -600,7 +617,7 @@ class ImageGUI:
             alignedFaceDisplay = alignedFaceClean.copy()
 
             # ----------------------------
-            # 20) Draw target landmarks on aligned face thumbnail
+            # 21) Draw target landmarks on aligned face thumbnail
             #     red = right eye
             #     green = left eye
             #     blue = nose
@@ -615,7 +632,7 @@ class ImageGUI:
         return image, alignedFacesDisplay, alignedFacesClean
 
     # ----------------------------
-    # 21) Place aligned face thumbnails at the image corners
+    # 22) Place aligned face thumbnails at the image corners
     # ----------------------------
     def place_faces_on_corners(self, image, alignedFaces):
         imageHeight, imageWidth = image.shape[:2]
@@ -639,9 +656,9 @@ class ImageGUI:
         return image
 
     # ----------------------------
-    # 22) Prepare output folder
-    #    This creates the Processed_Images folder if needed and
-    #    clears old files from it.
+    # 23) Prepare output folder
+    #     This creates the Processed_Images folder if needed and
+    #     clears old files from it.
     # ----------------------------
     def prepare_output_folder(self, baseFolder: str) -> str:
         outputFolder = os.path.join(os.path.dirname(baseFolder), "Processed_Images")
@@ -657,27 +674,239 @@ class ImageGUI:
         return outputFolder
 
     # ----------------------------
-    # 23) Save cropped aligned faces
-    #    These saved outputs do not contain landmark markers.
+    # 24) Load pretrained face feature model
+    #     buffalo_l is used here so aligned faces can be converted
+    #     into embeddings for the later identity clustering step.
     # ----------------------------
-    def save_cropped_faces(self, croppedFaces: list, outputFolder: str, faceCounter: list) -> None:
-        for faceImage in croppedFaces:
-            if faceImage is None:
+    def initialize_face_embedder(self) -> bool:
+        if self.faceRecognizer is not None:
+            return True
+
+        try:
+            import insightface
+            from insightface.app import FaceAnalysis
+        except Exception as error:
+            messagebox.showerror(
+                "Model Load Error",
+                f"Could not import insightface correctly.\n{error}",
+            )
+            self.statusVar.set("Face feature model is unavailable.")
+            self.resultVar.set("Check insightface / numpy installation.")
+            return False
+
+        try:
+            self.statusVar.set("Loading pretrained face feature model. First run may take time.")
+            self.resultVar.set("Please wait while buffalo_l model is prepared.")
+            self.master.update_idletasks()
+
+            self.faceEmbeddingApp = FaceAnalysis(
+                name="buffalo_l",
+                providers=["CPUExecutionProvider"],
+            )
+            self.faceEmbeddingApp.prepare(ctx_id=0, det_size=(640, 640))
+
+            if "recognition" not in self.faceEmbeddingApp.models:
+                raise RuntimeError("Recognition model was not loaded from buffalo_l.")
+
+            self.faceRecognizer = self.faceEmbeddingApp.models["recognition"]
+            return True
+
+        except Exception as error:
+            messagebox.showerror(
+                "Model Load Error",
+                f"Could not initialize pretrained face feature model.\n{error}",
+            )
+            self.statusVar.set("Failed to load face feature model.")
+            self.resultVar.set("Bulk feature extraction could not start.")
+            return False
+
+    # ----------------------------
+    # 25) Extract embedding from one aligned face
+    #     The aligned face is converted into a normalized feature
+    #     vector which will later be used for identity clustering.
+    # ----------------------------
+    def extract_face_embedding(self, faceImage):
+        if self.faceRecognizer is None:
+            return None
+
+        try:
+            resizedFace = cv2.resize(faceImage, (112, 112))
+            featureOutput = self.faceRecognizer.get_feat(resizedFace)
+            featureVector = np.array(featureOutput, dtype=np.float32).flatten()
+
+            featureNorm = np.linalg.norm(featureVector)
+            if featureNorm > 0:
+                featureVector = featureVector / featureNorm
+
+            return featureVector
+        except Exception:
+            return None
+
+    # ----------------------------
+    # 26) Build cosine-distance matrix
+    #     The embeddings are already normalized, so cosine
+    #     distance can be computed from their dot products.
+    # ----------------------------
+    def build_distance_matrix(self):
+        featureMatrix = np.array(
+            [record["embedding"] for record in self.bulkFaceRecords],
+            dtype=np.float32,
+        )
+
+        featureNorms = np.linalg.norm(featureMatrix, axis=1, keepdims=True)
+        featureNorms[featureNorms == 0] = 1.0
+        normalizedFeatures = featureMatrix / featureNorms
+
+        similarityMatrix = normalizedFeatures @ normalizedFeatures.T
+        similarityMatrix = np.clip(similarityMatrix, -1.0, 1.0)
+
+        distanceMatrix = 1.0 - similarityMatrix
+        np.fill_diagonal(distanceMatrix, 0.0)
+
+        return distanceMatrix
+
+    # ----------------------------
+    # 27) Run agglomerative clustering for one threshold
+    #     This helper supports both newer and older versions of
+    #     scikit-learn.
+    # ----------------------------
+    def run_agglomerative(self, distanceMatrix, thresholdValue):
+        try:
+            clusterModel = AgglomerativeClustering(
+                n_clusters=None,
+                metric="precomputed",
+                linkage="complete",
+                distance_threshold=thresholdValue,
+            )
+        except TypeError:
+            clusterModel = AgglomerativeClustering(
+                n_clusters=None,
+                affinity="precomputed",
+                linkage="complete",
+                distance_threshold=thresholdValue,
+            )
+
+        labels = clusterModel.fit_predict(distanceMatrix)
+        return labels
+
+    # ----------------------------
+    # 28) Choose the best automatic clustering result
+    #     Several distance thresholds are tried. The threshold
+    #     with the best silhouette score is selected, with a
+    #     penalty for too many singleton clusters.
+    # ----------------------------
+    def cluster_face_records(self):
+        if AgglomerativeClustering is None or silhouette_score is None:
+            messagebox.showerror(
+                "Missing Library",
+                "Please install scikit-learn before running identity clustering.",
+            )
+            self.statusVar.set("Identity clustering is unavailable.")
+            self.resultVar.set("Install scikit-learn first.")
+            return [], 0, None
+
+        faceCount = len(self.bulkFaceRecords)
+
+        if faceCount == 0:
+            return [], 0, None
+
+        if faceCount == 1:
+            return [1], 1, None
+
+        distanceMatrix = self.build_distance_matrix()
+
+        thresholdCandidates = np.arange(0.35, 0.61, 0.02)
+        bestScore = -999999.0
+        bestLabels = None
+        bestThreshold = None
+
+        for thresholdValue in thresholdCandidates:
+            try:
+                labels = self.run_agglomerative(distanceMatrix, thresholdValue)
+            except Exception:
                 continue
 
-            if faceImage.shape[0] != 125 or faceImage.shape[1] != 125:
+            uniqueLabels = np.unique(labels)
+            clusterCount = len(uniqueLabels)
+
+            if clusterCount < 2 or clusterCount > faceCount:
                 continue
 
-            fileName = f"face_{faceCounter[0]:04d}.jpg"
+            try:
+                silhouetteValue = silhouette_score(
+                    distanceMatrix,
+                    labels,
+                    metric="precomputed",
+                )
+            except Exception:
+                continue
+
+            singletonCount = 0
+            for labelValue in uniqueLabels:
+                labelMembers = np.sum(labels == labelValue)
+                if labelMembers == 1:
+                    singletonCount += 1
+
+            singletonRatio = singletonCount / faceCount
+
+            # ----------------------------
+            # Prefer well-separated clusters but penalize solutions
+            # that make almost every face its own identity.
+            # ----------------------------
+            combinedScore = silhouetteValue - (0.20 * singletonRatio)
+
+            if combinedScore > bestScore:
+                bestScore = combinedScore
+                bestLabels = labels.copy()
+                bestThreshold = float(thresholdValue)
+
+        if bestLabels is None:
+            fallbackThreshold = 0.48
+            bestLabels = self.run_agglomerative(distanceMatrix, fallbackThreshold)
+            bestThreshold = fallbackThreshold
+
+        identityNumbers = []
+        labelToIdentity = {}
+        nextIdentity = 1
+
+        for labelValue in bestLabels:
+            if labelValue not in labelToIdentity:
+                labelToIdentity[labelValue] = nextIdentity
+                nextIdentity += 1
+            identityNumbers.append(labelToIdentity[labelValue])
+
+        uniqueIdentityCount = len(set(identityNumbers))
+
+        return identityNumbers, uniqueIdentityCount, bestThreshold
+
+    # ----------------------------
+    # 29) Save clustered faces
+    #     Output files are saved without landmarks using the
+    #     required format Identity_N_face_M.jpg
+    # ----------------------------
+    def save_clustered_faces(self, outputFolder: str, identityNumbers: list) -> int:
+        identityFaceCounts = {}
+        savedCount = 0
+
+        for record, identityNumber in zip(self.bulkFaceRecords, identityNumbers):
+            if identityNumber not in identityFaceCounts:
+                identityFaceCounts[identityNumber] = 0
+
+            identityFaceCounts[identityNumber] += 1
+
+            fileName = f"Identity_{identityNumber}_face_{identityFaceCounts[identityNumber]}.jpg"
             savePath = os.path.join(outputFolder, fileName)
-            cv2.imwrite(savePath, faceImage)
-            faceCounter[0] += 1
+            cv2.imwrite(savePath, record["faceImage"])
+            savedCount += 1
+
+        return savedCount
 
     # ----------------------------
-    # 24) Bulk processing button
-    #    This opens a folder, processes all images in it, saves
-    #    aligned face crops into Processed_Images, and displays
-    #    a summary in the GUI.
+    # 30) Bulk processing button
+    #     This opens a folder, processes all images in it, extracts
+    #     aligned faces, computes embeddings, clusters them into
+    #     identities, saves the clustered faces, and reports the
+    #     final identity count on the GUI.
     # ----------------------------
     def bulk_processing(self) -> None:
         folderPath = filedialog.askdirectory(title="Select Folder for Bulk Processing")
@@ -685,6 +914,9 @@ class ImageGUI:
         if not folderPath:
             self.statusVar.set("No folder selected.")
             self.resultVar.set("Waiting for folder selection.")
+            return
+
+        if not self.initialize_face_embedder():
             return
 
         imageExtensions = [".png", ".jpg", ".jpeg", ".bmp", ".gif", ".tif", ".tiff"]
@@ -697,6 +929,8 @@ class ImageGUI:
             if os.path.isfile(fullPath) and extension in imageExtensions:
                 imageFiles.append(fullPath)
 
+        imageFiles.sort()
+
         if len(imageFiles) == 0:
             messagebox.showwarning("No Images", "No image files were found in the selected folder.")
             self.statusVar.set("No valid images found in selected folder.")
@@ -708,7 +942,8 @@ class ImageGUI:
         totalImagesProcessed = 0
         totalRawDetections = 0
         totalValidatedFaces = 0
-        faceCounter = [1]
+        totalEmbeddingsExtracted = 0
+        self.bulkFaceRecords = []
 
         startTime = time.time()
 
@@ -721,7 +956,21 @@ class ImageGUI:
                 self.display_image(processedImage, ImgType.processed)
                 self.master.update_idletasks()
 
-                self.save_cropped_faces(alignedFacesClean, outputFolder, faceCounter)
+                fileName = os.path.basename(filePath)
+
+                for faceIndex, faceImage in enumerate(alignedFacesClean, start=1):
+                    embeddingVector = self.extract_face_embedding(faceImage)
+
+                    if embeddingVector is not None:
+                        self.bulkFaceRecords.append(
+                            {
+                                "sourceFile": fileName,
+                                "faceIndex": faceIndex,
+                                "faceImage": faceImage.copy(),
+                                "embedding": embeddingVector,
+                            }
+                        )
+                        totalEmbeddingsExtracted += 1
 
                 totalImagesProcessed += 1
                 totalRawDetections += rawFaceCount
@@ -730,30 +979,41 @@ class ImageGUI:
             except Exception:
                 continue
 
+        identityNumbers, uniqueIdentityCount, bestThreshold = self.cluster_face_records()
+
+        totalSavedFaces = 0
+        if len(identityNumbers) > 0:
+            totalSavedFaces = self.save_clustered_faces(outputFolder, identityNumbers)
+
         endTime = time.time()
         processingTime = endTime - startTime
-        totalSavedFaces = faceCounter[0] - 1
+
+        if bestThreshold is None:
+            thresholdText = "N/A"
+        else:
+            thresholdText = f"{bestThreshold:.2f}"
 
         self.statusVar.set(
             f"Bulk processing completed successfully. Output folder: {outputFolder}"
         )
         self.resultVar.set(
-            f"Bulk processing completed in {processingTime:.2f} seconds.\n"
-            f"Images processed: {totalImagesProcessed}\n"
+            f"Total {totalImagesProcessed} image(s) processed in {processingTime:.2f} seconds.\n"
+            f"{totalValidatedFaces} face(s) detected corresponding to {uniqueIdentityCount} unique identit(y/ies).\n"
             f"Raw detections: {totalRawDetections}\n"
-            f"Skin validated faces: {totalValidatedFaces}\n"
-            f"Aligned faces saved: {totalSavedFaces}"
+            f"Face embeddings extracted: {totalEmbeddingsExtracted}\n"
+            f"Clustered faces saved: {totalSavedFaces}\n"
+            f"Chosen clustering threshold: {thresholdText}"
         )
 
         messagebox.showinfo(
             "Bulk Processing Complete",
-            f"Processed {totalImagesProcessed} image(s) and saved {totalSavedFaces} aligned face(s).",
+            f"Processed {totalImagesProcessed} image(s), detected {totalValidatedFaces} face(s), and found {uniqueIdentityCount} unique identit(y/ies).",
         )
 
     # ----------------------------
-    # 25) Display an image in the GUI
-    #    The image is resized to fit the fixed display area while
-    #    keeping its aspect ratio.
+    # 31) Display an image in the GUI
+    #     The image is resized to fit the fixed display area while
+    #     keeping its aspect ratio.
     # ----------------------------
     def display_image(self, img: Image.Image, imageType: ImgType) -> None:
         widthValue, heightValue = img.size

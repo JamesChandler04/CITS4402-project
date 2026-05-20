@@ -1,3 +1,8 @@
+numpy==1.26.4
+opencv-python==4.11.0.86
 pillow
 mypy
+scikit-learn
 mediapipe==0.10.35
+onnxruntime
+models\insightface-0.7.3-cp311-cp311-win_amd64.whl

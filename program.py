@@ -875,7 +875,7 @@ class ImageGUI:
                 bestThreshold = float(thresholdValue)
 
         if bestLabels is None:
-            fallbackThreshold = 0.48
+            fallbackThreshold = 0.70
             bestLabels = self.run_agglomerative(
                 distanceMatrix, fallbackThreshold)
             bestThreshold = fallbackThreshold

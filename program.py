@@ -297,8 +297,8 @@ class ImageGUI:
     def create_skin_mask(self, image):
         yCrCbImage = cv2.cvtColor(image, cv2.COLOR_BGR2YCrCb)
 
-        lowerSkin = np.array([0, 133, 77], dtype=np.uint8)
-        upperSkin = np.array([255, 173, 127], dtype=np.uint8)
+        lowerSkin = np.array([0, 140, 87], dtype=np.uint8)
+        upperSkin = np.array([255, 165, 117], dtype=np.uint8)
 
         skinMask = cv2.inRange(yCrCbImage, lowerSkin, upperSkin)
 

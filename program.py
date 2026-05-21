@@ -829,7 +829,7 @@ class ImageGUI:
 
         distanceMatrix = self.build_distance_matrix()
 
-        thresholdCandidates = np.arange(0.10, 0.91, 0.02)
+        thresholdCandidates = np.arange(0.10, 0.85, 0.02)
         bestScore = -999999.0
         bestLabels = None
         bestThreshold = None

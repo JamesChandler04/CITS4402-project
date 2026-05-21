@@ -72,9 +72,11 @@ class ImageGUI:
 
         self.net = cv2.dnn.readNetFromCaffe(protoPath, modelPath)
 
-        landmarkerPath = os.path.join(scriptFolder, "models", "face_landmarker.task")
+        landmarkerPath = os.path.join(
+            scriptFolder, "models", "face_landmarker.task")
         if not os.path.exists(landmarkerPath):
-            raise FileNotFoundError(f"Could not find model file: {landmarkerPath}")
+            raise FileNotFoundError(
+                f"Could not find model file: {landmarkerPath}")
 
         baseOptions = mp_tasks.BaseOptions(model_asset_path=landmarkerPath)
         options = mp_vision.FaceLandmarkerOptions(
@@ -268,7 +270,8 @@ class ImageGUI:
         self.display_image(originalImage, ImgType.original)
 
         startTime = time.time()
-        processedImage, faces, rawFaceCount, _alignedFacesClean = self.find_faces(filePath)
+        processedImage, faces, rawFaceCount, _alignedFacesClean = self.find_faces(
+            filePath)
         endTime = time.time()
 
         self.display_image(processedImage, ImgType.processed)
@@ -277,7 +280,8 @@ class ImageGUI:
         processingTime = endTime - startTime
         validatedFaceCount = len(faces)
 
-        self.statusVar.set(f"Loaded and processed image successfully: {fileName}")
+        self.statusVar.set(
+            f"Loaded and processed image successfully: {fileName}")
         self.resultVar.set(
             f"Single image processed in {processingTime:.2f} seconds.\n"
             f"Raw detections: {rawFaceCount}\n"
@@ -345,7 +349,8 @@ class ImageGUI:
         validatedFaces = []
 
         for faceBox in faceBoxes:
-            overallRatio, centerRatio = self.compute_skin_ratio(skinMask, faceBox)
+            overallRatio, centerRatio = self.compute_skin_ratio(
+                skinMask, faceBox)
 
             if overallRatio >= 0.08 and centerRatio >= 0.12:
                 validatedFaces.append(faceBox)
@@ -419,9 +424,11 @@ class ImageGUI:
         #     These are shown on the processed image.
         # ----------------------------
         for startX, startY, endX, endY in faces:
-            cv2.rectangle(image, (startX, startY), (endX, endY), (0, 255, 0), 2)
+            cv2.rectangle(image, (startX, startY),
+                          (endX, endY), (0, 255, 0), 2)
 
-        image, alignedFacesDisplay, alignedFacesClean = self.detect_landmarks(image, cleanImage, faces)
+        image, alignedFacesDisplay, alignedFacesClean = self.detect_landmarks(
+            image, cleanImage, faces)
         image = self.place_faces_on_corners(image, alignedFacesDisplay)
 
         imageRgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
@@ -491,7 +498,8 @@ class ImageGUI:
         if eyeDistance < 10:
             return None
 
-        srcPoints = np.float32([rightEyePoint, leftEyePoint, nosePoint]).reshape(-1, 1, 2)
+        srcPoints = np.float32(
+            [rightEyePoint, leftEyePoint, nosePoint]).reshape(-1, 1, 2)
         dstPoints = np.float32(
             [
                 [40, 40],
@@ -546,7 +554,8 @@ class ImageGUI:
                 continue
 
             faceCropRgb = cv2.cvtColor(faceCrop, cv2.COLOR_BGR2RGB)
-            mpImage = mp.Image(image_format=mp.ImageFormat.SRGB, data=faceCropRgb)
+            mpImage = mp.Image(
+                image_format=mp.ImageFormat.SRGB, data=faceCropRgb)
             results = self.faceMesh.detect(mpImage)
 
             if not results.face_landmarks:
@@ -609,7 +618,8 @@ class ImageGUI:
             cv2.circle(image, leftEyeGlobal, 4, (0, 255, 0), -1)
             cv2.circle(image, noseGlobal, 4, (255, 0, 0), -1)
 
-            alignedFaceClean = self.align_face(faceCrop, rightEyeLocal, leftEyeLocal, nose)
+            alignedFaceClean = self.align_face(
+                faceCrop, rightEyeLocal, leftEyeLocal, nose)
 
             if alignedFaceClean is None:
                 continue
@@ -661,7 +671,8 @@ class ImageGUI:
     #     clears old files from it.
     # ----------------------------
     def prepare_output_folder(self, baseFolder: str) -> str:
-        outputFolder = os.path.join(os.path.dirname(baseFolder), "Processed_Images")
+        outputFolder = os.path.join(
+            os.path.dirname(baseFolder), "Processed_Images")
 
         if os.path.exists(outputFolder):
             for fileName in os.listdir(outputFolder):
@@ -695,8 +706,10 @@ class ImageGUI:
             return False
 
         try:
-            self.statusVar.set("Loading pretrained face feature model. First run may take time.")
-            self.resultVar.set("Please wait while buffalo_l model is prepared.")
+            self.statusVar.set(
+                "Loading pretrained face feature model. First run may take time.")
+            self.resultVar.set(
+                "Please wait while buffalo_l model is prepared.")
             self.master.update_idletasks()
 
             self.faceEmbeddingApp = FaceAnalysis(
@@ -706,7 +719,8 @@ class ImageGUI:
             self.faceEmbeddingApp.prepare(ctx_id=0, det_size=(640, 640))
 
             if "recognition" not in self.faceEmbeddingApp.models:
-                raise RuntimeError("Recognition model was not loaded from buffalo_l.")
+                raise RuntimeError(
+                    "Recognition model was not loaded from buffalo_l.")
 
             self.faceRecognizer = self.faceEmbeddingApp.models["recognition"]
             return True
@@ -815,7 +829,7 @@ class ImageGUI:
 
         distanceMatrix = self.build_distance_matrix()
 
-        thresholdCandidates = np.arange(0.35, 0.61, 0.02)
+        thresholdCandidates = np.arange(0.10, 0.91, 0.02)
         bestScore = -999999.0
         bestLabels = None
         bestThreshold = None
@@ -862,7 +876,8 @@ class ImageGUI:
 
         if bestLabels is None:
             fallbackThreshold = 0.48
-            bestLabels = self.run_agglomerative(distanceMatrix, fallbackThreshold)
+            bestLabels = self.run_agglomerative(
+                distanceMatrix, fallbackThreshold)
             bestThreshold = fallbackThreshold
 
         identityNumbers = []
@@ -909,7 +924,8 @@ class ImageGUI:
     #     final identity count on the GUI.
     # ----------------------------
     def bulk_processing(self) -> None:
-        folderPath = filedialog.askdirectory(title="Select Folder for Bulk Processing")
+        folderPath = filedialog.askdirectory(
+            title="Select Folder for Bulk Processing")
 
         if not folderPath:
             self.statusVar.set("No folder selected.")
@@ -919,7 +935,8 @@ class ImageGUI:
         if not self.initialize_face_embedder():
             return
 
-        imageExtensions = [".png", ".jpg", ".jpeg", ".bmp", ".gif", ".tif", ".tiff"]
+        imageExtensions = [".png", ".jpg", ".jpeg",
+                           ".bmp", ".gif", ".tif", ".tiff"]
         imageFiles = []
 
         for fileName in os.listdir(folderPath):
@@ -932,7 +949,8 @@ class ImageGUI:
         imageFiles.sort()
 
         if len(imageFiles) == 0:
-            messagebox.showwarning("No Images", "No image files were found in the selected folder.")
+            messagebox.showwarning(
+                "No Images", "No image files were found in the selected folder.")
             self.statusVar.set("No valid images found in selected folder.")
             self.resultVar.set("Please choose another folder.")
             return
@@ -950,7 +968,8 @@ class ImageGUI:
         for filePath in imageFiles:
             try:
                 originalImage = Image.open(filePath)
-                processedImage, faces, rawFaceCount, alignedFacesClean = self.find_faces(filePath)
+                processedImage, faces, rawFaceCount, alignedFacesClean = self.find_faces(
+                    filePath)
 
                 self.display_image(originalImage, ImgType.original)
                 self.display_image(processedImage, ImgType.processed)
@@ -983,7 +1002,8 @@ class ImageGUI:
 
         totalSavedFaces = 0
         if len(identityNumbers) > 0:
-            totalSavedFaces = self.save_clustered_faces(outputFolder, identityNumbers)
+            totalSavedFaces = self.save_clustered_faces(
+                outputFolder, identityNumbers)
 
         endTime = time.time()
         processingTime = endTime - startTime

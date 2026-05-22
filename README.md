@@ -48,7 +48,6 @@ CITS4402-project/
     ├── face_landmarker.task
     └── insightface-0.7.3-cp311-cp311-win_amd64.whl
 
-
 If your script file has a different name, replace program.py in the run command below with your actual filename.
 
 ## Requirements
@@ -248,4 +247,3 @@ The project pipeline is:
 - Group Member 1 : James Chandler (23348041)
 - Group Member 2 : Hamza Hanif Mir (24410764)
 - Group Member 3 : George Guillain (25077521)
-

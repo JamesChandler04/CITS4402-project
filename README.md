@@ -42,7 +42,6 @@ CITS4402-project/
 ├── requirements.txt
 ├── README.md
 ├── .gitignore 
-│
 └── models/
     ├── deploy.prototxt
     ├── res10_300x300_ssd_iter_140000_fp16.caffemodel
@@ -245,11 +244,7 @@ The project pipeline is:
 
 ## Authors
 
-Group Member 1 Name: James Chandler
-Group Member 1 Student Number: 23348041
+- Group Member 1 : James Chandler (23348041)
+- Group Member 2 : Hamza Hanif Mir (24410764)
+- Group Member 3 : George Guillain (25077521)
 
-Group Member 2 Name: Hamza Hanif Mir
-Group Member 2 Student Number: 24410764
-
-Group Member 3 Name: George Guillain
-Group Member 3 Student Number: 25077521

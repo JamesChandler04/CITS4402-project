@@ -41,12 +41,14 @@ CITS4402-project/
 ├── program.py
 ├── requirements.txt
 ├── README.md
-├── .gitignore 
+├── .gitignore
+│
 └── models/
     ├── deploy.prototxt
     ├── res10_300x300_ssd_iter_140000_fp16.caffemodel
     ├── face_landmarker.task
     └── insightface-0.7.3-cp311-cp311-win_amd64.whl
+
 
 If your script file has a different name, replace program.py in the run command below with your actual filename.
 

@@ -2,14 +2,14 @@
 CITS4402 Computer Vision Project 2026
 Title: Face Detection and Matching
 
-Group Member 1 Name: James
+Group Member 1 Name: James Chandler
 Group Member 1 Student Number: 23348041
 
-Group Member 2 Name: Hamza
-Group Member 2 Student Number:
+Group Member 2 Name: Hamza Hanif Mir
+Group Member 2 Student Number: 24410764
 
-Group Member 3 Name: George
-Group Member 3 Student Number:
+Group Member 3 Name: George Guillain
+Group Member 3 Student Number: 25077521
 """
 
 # pylint: disable=no-member

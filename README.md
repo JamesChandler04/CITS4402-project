@@ -41,7 +41,6 @@ CITS4402-project/
 ├── program.py
 ├── requirements.txt
 ├── README.md
-├── .gitignore
 │
 └── models/
     ├── deploy.prototxt

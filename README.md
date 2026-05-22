@@ -42,7 +42,7 @@ Make sure your project folder is arranged like this:
 ```text
 CITS4402-project/
 │
-├── program.py
+├── Chandler_Guillain_Mir_Script.py
 ├── requirements.txt
 ├── README.md
 │
@@ -53,7 +53,7 @@ CITS4402-project/
     └── insightface-0.7.3-cp311-cp311-win_amd64.whl
 ```
 
-If your script file has a different name, replace `program.py` in the run command below with your actual filename.
+If your script file has a different name, replace `Chandler_Guillain_Mir_Script.py` in the run command below with your actual filename.
 
 ## Requirements
 
@@ -123,7 +123,7 @@ pip install models/insightface-0.7.3-cp311-cp311-win_amd64.whl
 Run the script using:
 
 ```bash
-python program.py
+python Chandler_Guillain_Mir_Script.py
 ```
 
 If your file is named differently, for example:
